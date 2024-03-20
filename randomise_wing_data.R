@@ -19,20 +19,20 @@ if (file.exists(outdir)==FALSE){
   dir.create(outdir)
 }
 
+### Part 1. Prepare the data set to be shuffled ####
+# Outcome will be two data tables
+# population_info: Gen, Treatment, (observed) Line
+# line_trait_info: animal +vial +ind and Trait score in wide format and a unique LineID
+
 # Import wing data
 wing_dat <- fread("mr_wings_6traits.csv")
 
 # Create a number key for traits
 trait_number <- unique(wing_dat[,c("Index", "Trait")])
 
-### Part 1. Prepare the data set to be shuffled ####
-# Outcome will be two data tables
-# population_info: Gen, Treatment, Line
-# line_trait_info: Line +vial +ind and Score
-
 #remove unnecessary columns
 rm_col <- c("stdScore","outSD","multiout", "MD", "Trait")
-set(wing_dat, ,rm_col, NULL)
+wing_dat <- wing_dat[, .SD, .SDcols = !rm_col]
 
 # convert to wide
 wing_data_wide <- dcast(wing_dat, Animal+Gen+Treatment+Treat+Line+Vial+Ind ~ Index,  
@@ -48,7 +48,7 @@ nrow(population_info) # 493 unique 'lines'
 population_info$LineID = 1:nrow(population_info)
 
 # Add the unique line identifier back to the observed data, 
-# omitting missing lines
+# omitting lines from the observed data that had no observations
 wing_data_wide <- merge(wing_data_wide, population_info, 
                         by=c("Gen","Treatment", "Line"), all.x = TRUE)
 
@@ -62,18 +62,45 @@ line_trait_info <- wing_data_wide[,!c("Gen","Treatment","Treat", "Line")]#
 # Remove LineID from population_info (this will be ran)
 population_info <- population_info[, .SD, .SDcols = !"LineID"]
 
-### Part 2. Write a function to randomised data and save to .csv ####
+### Part 2. Generate a data frame of sets of randomised unique line IDs ####
+# Create data frame of randomised sets of 'lines' using the unique line ID
+# all_sets: each column is a sample of lines [set] and each row is a line
 
-# pop_dat=population_info; biol_dat=line_trait_info; line_smpl=all_sets[,1]
+# Set number of data sets to generate
+n_set = 1000
+# sample with replacement? TRUE/FALSE
+smpl_with_replace = TRUE
 
+# Create a list of the unique line IDs
+line_id_list <- unique(line_trait_info$LineID)
+# set the number of lines to be sampled
+num_lines = length(line_id_list)# here 493
+
+# Create a data.frame of random line samples,
+# where each column is a unique draw of line ids 1:493
+
+all_sets <-data.table(NULL)
+for (i in 1:n_set) {
+  sub_set <- sample(line_id_list, size = num_lines, replace = smpl_with_replace)
+  all_sets <- cbind(all_sets,sub_set)
+}
+# Rename columns to the set number
+colnames(all_sets) <- as.character(seq(1,n_set))
+
+# Inspect first 5 columns of all_sets
+all_sets[,1:5]
+
+### Part 3. Write a function to merge randomised line data to trait info and save to .csv ####
 
 create_randomise_wing_data <- function(line_smpl,
                                 pop_dat=population_info, biol_dat=line_trait_info){
   # set default pop_dat as population_info and  biol_dat as line_trait_info
-  rep = names(line_smpl)
-  pop_dat$LineID = line_smpl
+  set_num = names(line_smpl)# stores the column numbered name to number data set later
+  pop_dat$LineID = line_smpl# adds the randomised unique line IDs to population_info
+  
+  # Populate with the flies and their wing information by merging on "LineID"
   randomised_line_data <- biol_dat[pop_dat, on = "LineID"]
-  randomised_line_data$LineID <- NULL # remove LineID
+  randomised_line_data$LineID <- NULL # remove the unique LineID, no longer needed
   
   # Add Mahalanobis Distance and outliers
   x <- randomised_line_data[, .SD, .SDcols = c("CS","ILD1.2","ILD1.5","ILD2.5","ILD2.8","ILD3.7")]
@@ -83,7 +110,7 @@ create_randomise_wing_data <- function(line_smpl,
                                                                MD < chi_crit_val, 0, 
                                                                default = NA)]
   
-  # Add treatment as an integer "S" = 1 and "B" = 3
+  # Add treatment as a number for SAS: "S" = 1 and "B" = 3
   randomised_line_data$Treat <- randomised_line_data[,fcase(Treatment=="S", 1,
                                                             Treatment=="B", 3, 
                                                                default = NA)]
@@ -109,32 +136,12 @@ create_randomise_wing_data <- function(line_smpl,
   
   # Output csv
   fwrite(randomised_line_data_lng, 
-         file=paste0(outdir, "/mr_wings_6traits_rando_", rep, ".csv"),
+         file=paste0(outdir, "/mr_wings_6traits_rando_", set_num, ".csv"),
          quote=FALSE)
 
 }
 
-
-### Implement function on sets of randomised lines ####
-
-# Create data frame of randomised sets of 'lines'
-
-# Set number of data sets to generate
-n_set = 20
-# sample with replacement?
-smpl_with_replace = TRUE
-
-# Create a data.frame of random line samples,
-# where each column is a unique draw of line ids 1:493
-line_id_list <- unique(line_trait_info$LineID)
-num_lines = length(line_id_list)
-
-all_sets <-data.table(NULL)
-for (i in 1:n_set) {
-  sub_set <- sample(line_id_list, size = num_lines, replace = smpl_with_replace)
-  all_sets <- cbind(all_sets,sub_set)
-}
-colnames(all_sets) <- as.character(seq(1,n_set))
+### Part 4. Implement function on sets of randomised lines ####
 
 # Detect and set cores for parallel processing
 n_cores <- detectCores()-1

@@ -6,14 +6,11 @@
 ### of 12 groups (6 generations, 2 treatments), and then estimated the M for each of 
 ### the 12 groups.
 
-# [1] "Animal"    "Gen"       "Treatment" "Treat"     "Line"      "Vial"      "Ind"       "MD"       
-# [9] "multiout"  "Index"     "Trait"     "Score" 
-
 # Packages
 library(data.table); library(foreach); library(parallel); library(doParallel)
 
 # create an output directory
-outdir <- "generated_datasets"
+outdir <- "generated_dataset"
 
 if (file.exists(outdir)==FALSE){
   dir.create(outdir)
@@ -90,12 +87,12 @@ colnames(all_sets) <- as.character(seq(1,n_set))
 # Inspect first 5 columns of all_sets
 all_sets[,1:5]
 
-### Part 3. Write a function to merge randomised line data to trait info and save to .csv ####
+### Part 3. Write a function to merge randomised line data to trait info ####
 
 create_randomise_wing_data <- function(line_smpl,
                                 pop_dat=population_info, biol_dat=line_trait_info){
   # set default pop_dat as population_info and  biol_dat as line_trait_info
-  set_num = names(line_smpl)# stores the column numbered name to number data set later
+  pop_dat$RandRep = as.integer(names(line_smpl))# stores the column numbered name to number data set later
   pop_dat$LineID = line_smpl# adds the randomised unique line IDs to population_info
   
   # Populate with the flies and their wing information by merging on "LineID"
@@ -117,7 +114,7 @@ create_randomise_wing_data <- function(line_smpl,
   
   # Convert to long
   randomised_line_data_lng <- melt(randomised_line_data, 
-                                   id.vars=c("Gen","Treatment","Treat","Line", 
+                                   id.vars=c("RandRep","Gen","Treatment","Treat","Line", 
                                              "Animal", "Vial", "Ind", "MD", "multiout"),
                                    variable.name = "Index", value.name = "Score")
   
@@ -127,18 +124,8 @@ create_randomise_wing_data <- function(line_smpl,
 
   # re-order columns
   setcolorder(randomised_line_data_lng,
-           c("Animal", "Gen","Treatment", "Treat", "Line",  "Vial","Ind", "MD", 
+           c("RandRep","Animal", "Gen","Treatment", "Treat", "Line",  "Vial","Ind", "MD", 
              "multiout", "Index", "Trait", "Score"))
-  
-  # sort
-  setorderv(randomised_line_data_lng,
-            c("Gen", "Treat", "Line","Vial", "Ind"))
-  
-  # Output csv
-  fwrite(randomised_line_data_lng, 
-         file=paste0(outdir, "/mr_wings_6traits_rando_", set_num, ".csv"),
-         quote=FALSE)
-
 }
 
 ### Part 4. Implement function on sets of randomised lines ####
@@ -148,8 +135,23 @@ n_cores <- detectCores()-1
 cluster <- makeCluster(n_cores)
 doParallel::registerDoParallel(cluster)
 
+start_time <- Sys.time()
+
 # Implement function in parallel
-foreach(x = 1:ncol(all_sets), .packages = c("data.table")) %dopar%
+randomised_wing_dataset<- foreach(x = 1:ncol(all_sets), .packages = c("data.table"), 
+                                  .combine = "rbind") %dopar%
   create_randomise_wing_data(all_sets[,..x])
 
+end_time <- Sys.time()
+
+end_time - start_time
+
+# sort
+setorderv(randomised_wing_dataset,
+          c("RandRep","Gen", "Treat", "Line","Vial", "Ind"))
+
+# Output csv
+fwrite(randomised_wing_dataset,
+       file=paste0(outdir, "/mr_wings_6traits_rando_", n_set, "_datasets.csv"),
+       quote=FALSE)
 

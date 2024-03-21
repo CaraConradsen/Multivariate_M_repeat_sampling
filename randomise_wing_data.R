@@ -135,16 +135,11 @@ n_cores <- detectCores()-1
 cluster <- makeCluster(n_cores)
 doParallel::registerDoParallel(cluster)
 
-start_time <- Sys.time()
 
 # Implement function in parallel
 randomised_wing_dataset<- foreach(x = 1:ncol(all_sets), .packages = c("data.table"), 
                                   .combine = "rbind") %dopar%
   create_randomise_wing_data(all_sets[,..x])
-
-end_time <- Sys.time()
-
-end_time - start_time
 
 # sort
 setorderv(randomised_wing_dataset,

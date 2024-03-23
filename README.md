@@ -1,4 +1,14 @@
-## Overview of how `randomise_wing_data.R` works 
+# Variation in mutational variance-covariance matrices for _Drosophila serrata_ wing shape across sequential generations
+[Cara Conradsen](https://mcguiganlab.org/cara-conradson/) and [Katrina McGuigan](https://mcguiganlab.org/katrina-mcguigan/)
+
+This repository contains all the code and data used in the manuscript.
+
+###### We are still in the process of finalising and refining the manuscript.
+###### This is the companion paper to [Causes of variability in estimates of mutational variance from mutation accumulation experiments](https://doi.org/10.1093/genetics/iyac060) in Genetics. <a href="http://rsbl.royalsocietypublishing.org/content/12/5/20151003"><img src="http://tguillerme.github.io/images/OA.png" height="20" widht="20"/></a>
+
+## Analysis
+
+### `randomise_wing_data.R` 
 
 There are four parts to `randomise_wing_data.R`. In the first part, _Part 1. Prepare the data set to be shuffled_, we create a unique ID for a line. This section also separates the experimental component of Generation + Treatment + Line (`population_info`) and the individual fly trait information (with a newly assigned unique line ID, `line_trait_info`) into two data frames. 
 

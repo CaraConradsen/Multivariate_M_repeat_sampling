@@ -67,6 +67,8 @@ population_info <- population_info[, .SD, .SDcols = !"LineID"]
 n_set = 1000
 # sample with replacement? TRUE/FALSE
 smpl_with_replace = TRUE
+# set seed for reproducibility
+set.seed(42)
 
 # Create a list of the unique line IDs
 line_id_list <- unique(line_trait_info$LineID)

@@ -2,3 +2,14 @@
 .Rhistory
 .RData
 .Ruserdata
+generated_dataset/converge_1_125.csv                    
+generated_dataset/converge_126_250.csv                    
+generated_dataset/converge_251_375.csv                    
+generated_dataset/converge_376_500.csv                    
+generated_dataset/converge_501_625.csv                    
+generated_dataset/covpars_1_125.csv                       
+generated_dataset/covpars_126_250.csv                     
+generated_dataset/covpars_251_375.csv                     
+generated_dataset/covpars_376_500.csv                     
+generated_dataset/covpars_501_625.csv                     
+generated_dataset/mr_wings_6traits_rando_1000_datasets.csv

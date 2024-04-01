@@ -152,4 +152,4 @@ setorderv(randomised_wing_dataset,
          file=paste0(outdir,"/mr_wings_6traits_rando_1000_datasets.csv"),
          quote=FALSE)
 
-
+parallel::stopCluster(cluster)

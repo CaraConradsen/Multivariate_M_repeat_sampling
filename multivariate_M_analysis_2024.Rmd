@@ -35,7 +35,7 @@ font_add("times", regular = "times.ttf", bold = "timesbd.ttf", italic = "timesi.
 # Overall Parameters ------------------------------------------------------
 n <- 6  #number of traits 
 m <- 12  #number of matrices to compare
-traitnames<- c(1,2,3,5,6,7)#removed ILD2.8 (9)
+traitnames<- c(1,2,3,5,6,7)
 epsilon=0.05
 
 # Check model convergence -------------------------------------------------

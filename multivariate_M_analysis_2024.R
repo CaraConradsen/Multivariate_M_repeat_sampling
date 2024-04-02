@@ -4,29 +4,47 @@
 library(dplyr, warn.conflicts = FALSE); options(dplyr.summarise.inform = FALSE); library(data.table)
 library(stringi); library(stringr); library(magrittr); library(evolqg); library(Matrix)
 library(foreach); library(matrixStats); library(MASS); library(parallel); library(matrixcalc)
-library(gdata); library(bigstatsr); library(abind)
+library(gdata); library(bigstatsr); library(abind); library(psych); library(stats)
 
 # library(devEMF)
 # library(tidyr); library(plyr); library(Rcpp)
 # library(RColorBrewer); library(plotrix) 
 # library(gridExtra);library(grid);library(xtable);library(errors);;library(lmtest)
 # ;library(viridis)#Rank-based fitting of linear models
-# library(corpcor); ; library(psych); library(stats)
-# library(svglite)
+# library(corpcor); library(svglite)
 # fonts <- list(`Times New Roman` = "DejaVu Serif")
 
-# #figure outputs
-# library(sysfonts); library(showtextdb); library(showtext) 
-# ## Load Times New Roman fonts on Windows
-# font_add("times", regular = "times.ttf", bold = "timesbd.ttf", italic = "timesi.ttf", bolditalic ="timesbi.ttf")
+# figure outputs
+library(sysfonts); library(showtextdb); library(showtext)
+## Load Times New Roman fonts on Windows
+font_add("times", regular = "times.ttf", bold = "timesbd.ttf", italic = "timesi.ttf", bolditalic ="timesbi.ttf")
 
-# Define overall parameters, import data and  check model convergence and output ------------------------------------------------------
+# create an output directory
+outdir_tab <- "output_tables"
+outdir_fig <- "output_figures"
+
+if (file.exists(outdir_tab)==FALSE){
+  dir.create(outdir_tab)
+}
+if (file.exists(outdir_fig)==FALSE){
+  dir.create(outdir_fig)
+}
+
+# Section 1. Define overall parameters, import data and  check model convergence and output ------------------------------------------------------
+# This section will import and inspect the output of Equation 1 implemented in a 
+# restricted-maximum likelihood (REML) framework using in PROC MIXED in SAS v9.4.
+# At the end of this section we will have the following arrays:
+# 1. p observed M; M_array, dim = c(n, n, p)
+# 2. p asymptotic variance-covariance matrices; V_array, dim=c((n*(n+1)/2), (n*(n+1)/2), p)
+# 3. p theta vectors of observed covariance parameter estimates, theta_array, dim=c((n*(n+1)/2), 1, p)
+# 4. 10,000 M matrices generated via REML-MVN, N ~ (theta, V); AsycovM_array, dim=c(n, n, MVNsample, p)
+# 5. The M matrices from the 1000 randomised datasets; null_M_array, dim = c(n,n,nullnumber,p), where
 
 # Overall parameters 
 n <- 6  # number of traits 
 p <- 12  # number of matrices to compare (2 treatments by 6 generations)
 traitnumber <- c(1,2,3,5,6,7) # unique trait number
-nullnumber <- 625 # number of randomised datasets
+nullnumber <- 750 # number of randomised datasets
 MVNsample <- 10000  # number of REML-MVN samples
 epsilon = 0.05 # used for plotting caps CI intervals 
 
@@ -50,7 +68,7 @@ converge_null <- list.files(path = rando_un_cov_dir, pattern ="converge")
 un_null_converge <- foreach(i = 1:length(converge_null), .combine = rbind) %do% 
   fread(paste(rando_un_cov_dir,converge_null[i], sep="/"))
 
-un_null_converge[Status == 1]# only four instances where models did not converge
+un_null_converge[Status == 1]# only five instances where models did not converge
 
 unconverged_null <- un_null_converge[Status == 1]# will omit the unconverged models
 
@@ -126,7 +144,7 @@ null_Mfilenames <- list.files(path = rando_un_cov_dir, pattern = "covpars", full
 # create a function that takes in the covaraince estimates and outputs a matrix
 vec_est_2mat <- function(x){
   x <- c(x)
-  m <- matrix(0, nrow=n, ncol=n)
+  m <- matrix(NA, nrow=n, ncol=n)
   lowerTriangle(m, diag=TRUE, byrow = TRUE) <- x
   upperTriangle(m) = lowerTriangle(m, byrow = TRUE)
   return(m)
@@ -181,31 +199,35 @@ parallel::stopCluster(cluster)
 dim(null_M_array)
 
 # general range for 90% CI functions
-rangeFunc90<-function(x){
+rangeFunc90 <- function(x){
   n <- length(x)
-  lo<-as.numeric(quantile(x, c(.05)))
-  hi<-as.numeric(quantile(x, c(0.95)))
+  lo <- as.numeric(quantile(x, c(.05)))
+  hi <- as.numeric(quantile(x, c(0.95)))
   return(c(n, lo, hi))
 }
 
 # general range for 90% CI functions
-rangeFunc95<-function(x){
+rangeFunc95 <- function(x){
   n <- length(x)
-  lo<-as.numeric(quantile(x, c(.025)))
-  hi<-as.numeric(quantile(x, c(0.975)))
+  lo <- as.numeric(quantile(x, c(.025)))
+  hi <- as.numeric(quantile(x, c(0.975)))
   return(c(n, lo, hi))
 }
 
 
+# Section 2. M matrices eigenanalyses ------------------------------------------------------
+# Output the M matrices and eigenanalyses tables with 90% CI for supplementary
+# Create a figure contrasting M matrices across the 12 populations against univariaste estimates
 
- # Output R M matrices table ------------------------------------------------------
-comb<-data.frame(NULL)
-l=0; e=c(1:n)
-while (l<6) {
-  comb<-rbind(comb,cbind(rep((l+1),(n-l)),e[(l+1):n]))
-  l=l+1
+# Generate the coordinates of the 6 x 6 matrix
+comb <- data.frame(NULL)
+l = 0; e = c(1:n)
+while (l < 6) {
+  comb <- rbind(comb, cbind(rep((l+1),(n-l)), e[(l+1):n]))
+  l = l + 1
 } 
 
+# Calculated the CI for each element in M using the 10,000 REML-MVN AsycovM_array
 M_tab<-data.frame(NULL)
 for (mat in 1:p) {
   for (j in 1:nrow(comb)) {
@@ -216,46 +238,25 @@ for (mat in 1:p) {
 }
 setDT(M_tab)
 M_tab[, c("Treat","Gen") := data.table(str_split_fixed(V1,"_",2))]
-M_tab<-melt(M_tab[,-1],id.var=c("Treat", "Gen", "V2", "V3"), measure.vars = c("vl","vl_ci") )
+M_tab <- melt(M_tab[,-1],id.var=c("Treat", "Gen", "V2", "V3"), measure.vars = c("vl","vl_ci") )
 dcast(M_tab, Gen+variable+V3~Treat+V2, value.var=c("value"))->M_tab
 setorderv(M_tab, c("Gen", "V3"), c(1,1))
 M_tab[is.na(M_tab)]<-""
 
 
-# write.table(M_tab, file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/M_tab_CI.txt",
+# write.table(M_tab, file =paste(".",outdir_tab,"M_tab_CI.txt", sep="/"),
 #           row.names = FALSE, quote = TRUE, sep="\t")
 
 TraceM<-data.frame(NULL)
-for (i in 1:m) {
+for (i in 1:p) {
   TraceM<-rbind(TraceM, tr(M_list[[i]]))
 }
 
-# Do the ranges of contrivances change over time?
-par(mfrow=c(1,2))
-plot(NULL, ylim=c(-.25,0.25), xlim=c(1,12),
-     ylab="covaraince", xlab="M matrices")
-for (i in 1:12) {
-  M_list[[i]]->tmp
-  diag(tmp)=NA
-  boxplot(tmp[lower.tri(tmp)], at=i, add=TRUE,
-          pch=4,
-          col=ifelse(i<7, "blue", "grey"))
-}
-plot(NULL, ylim=c(0,0.25), xlim=c(1,12),
-     ylab="covaraince", xlab="M matrices")
-for (i in 1:12) {
-  M_list[[i]]->tmp
-  diag(tmp)=NA
-  boxplot(abs(tmp[lower.tri(tmp)]), at=i, add=TRUE,
-          pch=4,
-          col=ifelse(i<7, "blue", "grey"))
-}
-par(mfrow=c(1,1))
 
 # Get CIs for Eigenvectors
-EigenMCI_array<-array(0, dim=c(1, n, MVNsample, m))
+EigenMCI_array<-array(0, dim=c(1, n, MVNsample, p))
 stattime =Sys.time()
-for (mat in 1:m) {
+for (mat in 1:p) {
   for (i in 1:MVNsample) {
     for (vec in 1:n) {
       tmpVec<-t(eigen(M_list[[mat]])$vector[,vec])
@@ -267,7 +268,7 @@ for (mat in 1:m) {
 };end=Sys.time()-stattime; end #Time difference of 3.025336 mins
 
 EigenM_CI_tab<-data.frame(NULL)
-for (mat in 1:m) {
+for (mat in 1:p) {
   for (i in 1:n) {
     EigenM_CI_tab <- rbind(EigenM_CI_tab, 
                            c(names(M_list)[[mat]],paste0("e",i),
@@ -292,67 +293,11 @@ EigenM_CI_tab[, Treat2:=fcase(Treat==1 & Gen==1 & variable=="Lambda", "Small",
                               Treat==3 & Gen==1 & variable=="Lambda", "Large",
                               default = "")]
 
-# write.table(EigenM_CI_tab[,c(1:3,10:11,4:9)], file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/EigenM_CI_tab.txt",
+# write.table(EigenM_CI_tab[,c(1:3,10:11,4:9)], file =paste(".",outdir_tab,"EigenM_CI_tab.txt", sep="/"),
 # row.names = FALSE, quote = TRUE, sep="\t")
-EigenM_CI_tab_plot[, e:=as.numeric(gsub("e","", eigV))]
-as.data.table(apply(EigenM_CI_tab_plot[,c(3:5,7:9)], 2, function(x) as.numeric(x)))->EigenM_CI_tab_plot
-setDT(EigenM_CI_tab_plot)
-EigenM_CI_tab_plot[, ID := .I]
 
-#plot
-par(mfrow=c(1,1),mar=c(4,8,0.2,4))
-plot(NULL, xlim=c(-0.1, 0.9),yaxt="n",ylab="", xlab="Variance", ylim=c(1,72), bty="L")
-axis(side=2,at=c(18,54), tick = FALSE,las=2, labels = c("Small", "Large"), line=3)
-axis(side=2, at=seq(0,66, length.out=12), line=1.5, tick=FALSE,labels = rep(1:6,2), las=2)
-axis(side=2, at=1:72, labels = rep(paste0("e", 1:6),12), cex.axis=0.5, las=2)
-abline(v=0,lty=2)
-for (trt in c(1,3)) {
-  for (g in 1:6) {
-    for (ev in 1:6){
-      EigenM_CI_tab_plot[Treat==trt& Gen==g & e==ev] %T>% 
-        with(segments(Lo, ID, Hi, ID, lwd=ifelse(Lo>0,2,1), 
-                      col=ifelse(Lo>0 & Lambda>0, "blue",
-                        ifelse(trt==1, 1, 2)))) %>% 
-        with(points(Lambda, ID,col=ifelse(Lo>0 & Lambda>0, "blue",
-                        ifelse(trt==1, 1, 2)), pch=16, cex=0.95))
-    }
-    
-  }
-}
-
-# 
-# #Pairwise vector correlation
-# EigM_corr<-data.frame(NULL)
-# for (mat in 1:n) {
-#   for (i in 1:n) {
-#       r<-round(eigen(M_list[[mat]])$vector[,i] %*% eigen(M_list[[mat+5]])$vector[,i],2)
-#       rbind(EigM_corr, cbind(mat,i, r))->EigM_corr
-#   }
-# }
-# setDT(EigM_corr)
-# EigM_corr[,ID:=.I]
-# 
-# library("RColorBrewer")
-# # display.brewer.all()
-# EigM_corr[,colr:=fcase(i==1,"#081D58",i==2,"#253494",i==3,"#225EA8",
-#                        i==4,"#1D91C0",i==5,"#41B6C4",i==6,"#7FCDBB",default="NA")]
-#     
-# 
-# #Plot Pairwise Correlations
-# par(mar=c(4,4,2,2))
-# plot(NULL, bty="L", ylim=c(-0.05,1),ylab="Absolute treatment pairwise correlation (|r|)",
-#      xlab="",xlim=c(1,36), xaxt="n")
-# abline(h=0, lwd=1.3)
-# axis(side=1, at=seq(3.5,33.5, 6),line=1.1,tick=FALSE, labels = paste0("Gen ",1:6))
-# axis(side=1, at=1:36, labels = rep(paste0("e", 1:6),6), cex.axis=0.65)
-# for (x in 1:63) {
-#   EigM_corr[ID==x] %T>% 
-#     with(segments(ID, 0, ID, abs(V3), lwd=2, col=colr)) %>% 
-#     with(points(ID, abs(V3), pch=16, cex=1.2, col=colr))
-# }
-# 
 EigVec_M_tab<-data.frame(NULL)
-for(i in 1:m){
+for(i in 1:p){
   tmpM<-apply(eigen(M_list[[i]])$vectors, 2, function(x) sprintf("%.2f",x))
   tmpM<-cbind(rep(names(M_list)[[i]],6),c("CS","1.2","1.5","2.5","2.8","3.7"),tmpM)
   EigVec_M_tab<-rbind(EigVec_M_tab,tmpM)
@@ -366,9 +311,10 @@ EigVec_M_tab_head[,Treat:=fcase(V1=="1" & V2=="1", "Small",
                                 default="")]
 colnames(EigVec_M_tab_head)[2]<-"Gen"
 colnames(EigVec_M_tab)[2:8]<-c("Trait", paste0("e", 1:6))
-cbind(EigVec_M_tab_head[, .(Treat, Gen)], EigVec_M_tab[2:8])->EigVec_M_tab;rm(EigVec_M_tab_head)
+EigVec_M_tab <- cbind(EigVec_M_tab_head[, .(Treat, Gen)], EigVec_M_tab[2:8])
+rm(EigVec_M_tab_head)
 
-# write.table(EigVec_M_tab, file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/EigVec_M_tab.txt",
+# write.table(EigVec_M_tab, file =paste(".",outdir_tab,"EigVec_M_tab.txt", sep="/"),
 # row.names = FALSE, quote = TRUE, sep="\t")
 
 # fix the trace image
@@ -422,276 +368,110 @@ axis(side=2,at=50, family = "Times New Roman", "Proportion of among-line varianc
 axis(side=2, family = "Times New Roman",at=seq(0,100, 20),paste0(seq(0,100, 20),"%"), las=2)
 axis(side=1,family = "Times New Roman",at=1:6, as.expression(lapply(1:6, function(i)bquote(italic("e")[.(i)]))))
 mtext("B", 3, family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
-dev.off()
-
-```
-
-```{r Investigaate M PC elipses}
-# install.packages("remotes")
-# remotes::install_github("mlcollyer/ACHC")
-library(ACBC)
-par(mfrow=c(2,6))
-for (i in 1:12) {
-  pc.ellipse.plot(M_list[[i]],group.cols ="blue")
-}
-
-
-```
-
-
-```{r R matrices}
-R_tab<-data.frame(NULL)
-for (mat in 1:m) {
-  for (j in 1:nrow(comb)) {
-    resid<-sprintf("%.3f",R_list[[mat]][comb[j,1],comb[j,2]])
-    resid_ci<-paste(sprintf("%.3f",rangeFunc90(AsycovR_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
-    R_tab<-rbind(R_tab,cbind(names(M_list)[[mat]],comb[j,1],comb[j,2], resid,resid_ci))
-  }
-}
-setDT(R_tab)
-R_tab[, c("Treat","Gen") := data.table(str_split_fixed(V1,"_",2))]
-R_tab<-melt(R_tab[,-1],id.var=c("Treat", "Gen", "V2", "V3"), measure.vars = c("resid","resid_ci") )
-dcast(R_tab, Gen+variable+V3~Treat+V2, value.var=c("value"))->R_tab
-setorderv(R_tab, c("Gen", "V3"), c(1,1))
-R_tab[is.na(R_tab)]<-""
-# write.table(R_tab, file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/R_tab_CI.txt",
-#           row.names = FALSE, quote=TRUE, sep="\t")
-
- 
-# Get CIs for Eigenvectors
-EigenRCI_array<-array(0, dim=c(1, n, MVNsample, m))
-stattime =Sys.time()
-for (mat in 1:m) {
-  for (i in 1:MVNsample) {
-    for (vec in 1:n) {
-      tmpVec<-t(eigen(R_list[[mat]])$vector[,vec])
-      EigenRCI_array[,vec,i,mat] <- tmpVec %*%
-        AsycovR_array[,,i,mat] %*%
-        t(tmpVec)
-    }
-  }
-};end=Sys.time()-stattime; end #Time difference of 3.135797 mins
-
-EigenR_CI_tab<-data.frame(NULL)
-for (mat in 1:m) {
-  for (i in 1:n) {
-    EigenR_CI_tab <- rbind(EigenR_CI_tab,
-                           c(names(M_list)[[mat]],paste0("e",i),
-                             eigen(R_list[[mat]])$values[i],
-                             rangeFunc90(EigenRCI_array[,i,,mat])[2:3]))
-  }
-}
-colnames(EigenR_CI_tab)<-c("R", "eigV", "Lambda", "Lo", "Hi")
-EigenR_CI_tab<-cbind(EigenR_CI_tab[,1:2],
-      apply(EigenR_CI_tab[,3:5], 2, function(x) sprintf("%.3f", as.numeric(x))))
-setDT(EigenR_CI_tab)
-EigenR_CI_tab[, CI:= paste(Lo, Hi, sep = "; "), by=c("R", "eigV")]
-EigenR_CI_tab[, c("Treat","Gen") := data.table(str_split_fixed(R,"_",2))]
-EigenR_CI_tab->EigenR_CI_tab_plot
-
-EigenR_CI_tab<-melt(EigenR_CI_tab[,.(Treat, Gen, eigV, Lambda, CI)],
-                    id.var=c("Treat", "Gen", "eigV"), measure.vars = c("Lambda","CI"))
-dcast(EigenR_CI_tab, Treat+Gen+variable~eigV, value.var=c("value"))->EigenR_CI_tab
-EigenR_CI_tab[,Gen2:=fcase(variable=="Lambda", Gen,
-                           default = "")]
-EigenR_CI_tab[, Treat2:=fcase(Treat==1 & Gen==1 & variable=="Lambda", "Small",
-                              Treat==3 & Gen==1 & variable=="Lambda", "Large",
-                              default = "")]
-
-# write.table(EigenR_CI_tab[,c(1:3,10:11,4:9)], file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/EigenR_CI_tab.txt",
-# row.names = FALSE, quote = TRUE, sep="\t")
-
-#plot CIs to confirm overlap
-EigenR_CI_tab_plot[, e:=as.numeric(gsub("e","", eigV))]
-as.data.table(apply(EigenR_CI_tab_plot[,c(3:5,7:9)], 2, function(x) as.numeric(x)))->EigenR_CI_tab_plot
-setDT(EigenR_CI_tab_plot)
-EigenR_CI_tab_plot[, ID := .I]
-
-par(mfrow=c(1,1),mar=c(4,8,0.2,4))
-plot(NULL, xlim=c(0, 2),yaxt="n",ylab="", xlab="Variance", ylim=c(1,72), bty="L")
-axis(side=2,at=c(18,54), tick = FALSE,las=2, labels = c("Small", "Large"), line=3)
-axis(side=2, at=seq(0,66, length.out=12), line=1.5, tick=FALSE,labels = rep(1:6,2), las=2)
-axis(side=2, at=1:72, labels = rep(paste0("e", 1:6),12), cex.axis=0.5, las=2)
-abline(v=0,lty=2)
-for (trt in c(1,3)) {
-  for (g in 1:6) {
-    for (ev in 1:6){
-      EigenR_CI_tab_plot[Treat==trt& Gen==g & e==ev] %T>% 
-        with(segments(Lo, ID, Hi, ID, lwd=ifelse(Lo>0,2,1), 
-                      col=ifelse(Lo>0 & Lambda>0, "blue",
-                        ifelse(trt==1, 1, 2)))) %>% 
-        with(points(Lambda, ID,col=ifelse(Lo>0 & Lambda>0, "blue",
-                        ifelse(trt==1, 1, 2)), pch=16, cex=0.95))
-    }
-    
-  }
-}
-EigenR_CI_tab_plot[, Totvar:=tr(R_list[[grep(paste(Treat,Gen,sep="_"),names(M_list))]]), by="ID"]
-EigenR_CI_tab_plot[,PropVar:= round((Lambda/Totvar)*100,2), by="ID"]
-
-par(mfrow=c(1,1))
-EigenR_CI_tab_plot[e==1, .(PropVar, e)] %>%
-  with(boxplot(PropVar ~ e,
-               xlim=c(0,7), ylim=c(0,50),
-               xlab="Eigenvectors",bty="L",
-               ylab="Propotion of varaince (%)"))
-for (i in 2:n) {
-  EigenR_CI_tab_plot[e==i, .(PropVar, e)] %>% 
-    with(boxplot(PropVar~e,at=i, add=TRUE,  boxwex=0.55))
-}
- mean(EigenR_CI_tab_plot[e==1, PropVar])
- mean(EigenR_CI_tab_plot[e==2, PropVar])
- 
-# Chapter Figure
-R_MVN_trace_CI<-as.data.frame(t(apply(apply(AsycovR_array[,,,], c(3,4), 
-                                            function (x) tr(x)), 2, rangeFunc90)))
-setDT(R_MVN_trace_CI)
-colnames(R_MVN_trace_CI)<-c("n","lo","hi")
-R_MVN_trace_CI[, p:=.I]
-R_MVN_trace_CI$Trace<-unlist(lapply(R_list, tr))
-R_MVN_trace_CI[, x:=fcase(p <=6, p-0.15,
-                          p>6, p - 5.85, default=0)]
-
-R_eigenVectors<-matrix(unlist(lapply(R_list, 
-                                     function (x) eigen(x)$value)), ncol=6, byrow=TRUE)
-R_eigenVectors<-as.data.frame(apply(R_eigenVectors,2,"/", t(unlist(lapply(R_list, tr))))*100)
-setDT(R_eigenVectors)
-colnames(R_eigenVectors)<-paste0("e", 1:6)
-R_eigenVectors[,p:=.I]
-melt(R_eigenVectors, id.vars = "p")->R_eigenVectors
-R_eigenVectors$variable<-factor(R_eigenVectors$variable, levels=paste0("e", 1:6))
-
-# svglite(filename = "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/R_traceNeigs.svg",
-#     width = 7, height = 3.6, pointsize = 11,
-#     bg = "white", system_fonts = "Times New Roman")
-
-grDevices::cairo_ps(filename =
-                      "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/R_traceNeigs.eps", 
-                    family = "Times", bg="transparent",pointsize=11, width = 7, height = 3.6)
-# R traces
-par(mfrow=c(1,2), mar=c(4, 4.5,3, 1.5))
-plot(NULL, ylim=c(0,6), xlim=c(0.5,6.5),bty="L",yaxt="n",
-     xlab="Generations", family = "Times New Roman",
-     ylab=expression("Traces of "~bold(R)~"\u00B1 90% CI"))
-axis(side=2, at=seq(0,6),family = "Times New Roman", labels = sprintf("%.1f",seq(0,6)), las=2)
-R_MVN_trace_CI[,segments(x,lo,x,hi)]
-R_MVN_trace_CI[,segments(x-0.05,lo,x+0.05,lo)]
-R_MVN_trace_CI[,segments(x-0.05,hi,x+0.05,hi)]
-R_MVN_trace_CI[, points(x,Trace, pch=ifelse(p<=6, 16,21),
-                        bg=ifelse(p<=6, "NA","white"))]
-mtext("A", 3,family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
-
-R_eigenVectors %>% 
-  with(plot(NULL, xlim=c(0.5,6.5), 
-               xlab="",yaxt="n",bty="L",
-     ylab="",xaxt="n", 
-     yaxs="i", ylim=c(0,40)))
-R_eigenVectors[,boxplot(value~variable,col="white",
-                        yaxt="n",pch=4,xaxt="n",frame=F,boxwex=0.35, add = TRUE)]
-axis(side=1,at=3.5, family = "Times New Roman", "Eigenvectors", line=2, tick = FALSE)
-axis(side=2,at=20, family = "Times New Roman", "Proportion of residual variance", line=2, tick = FALSE)
-axis(side=2, family = "Times New Roman",at=seq(0,40, 5),paste0(seq(0,40, 5),"%"), las=2)
-axis(side=1,family = "Times New Roman",at=1:6, as.expression(lapply(1:6, function(i)bquote(italic("e")[.(i)]))))
-mtext("B", 3, family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
 # dev.off()
 
-```
-
-```{r Quick look at covarainces over time}
-par(mfrow=c(1,1), mar=c(4,4,4,4))
-plot(NULL, ylim=c(-1,1), xlim=c(0.5,12.5), bty="L",
-     ylab="Correlation")
-abline(h=0, lty=2, lwd=1.25, col="grey30")
-M_corr<-matrix(unlist(lapply(M_list, function (x) psych::cor.smooth(x)[lower.tri(x)])), ncol=15, byrow=TRUE)
-apply(M_corr[1:6,], 2, function (x) lines(1:6, x, col="black"))
-apply(M_corr[7:12,], 2, function (x) lines(7:12, x, col="blue"))
-for (i in 1:12) {
- points(rep(i, 15),M_corr[i,], pch=16, cex=0.75, 
-       col=ifelse(i<=6, rgb(0.1,0.1,0.1,alpha=0.7), rgb(0,0,1, alpha=0.75))) 
-}
-
-par(mfrow=c(1,1), mar=c(4,4,4,4))
-plot(NULL, ylim=c(-0.25,0.25), xlim=c(0.5,12.5), bty="L",
-     ylab="Covaraince")
-abline(h=0, lty=2, lwd=1.25, col="grey30")
-M_corr<-matrix(unlist(lapply(M_list, function (x) x[lower.tri(x)])), ncol=15, byrow=TRUE)
-apply(M_corr[1:6,], 2, function (x) lines(1:6, x, col="black"))
-apply(M_corr[7:12,], 2, function (x) lines(7:12, x, col="blue"))
-for (i in 1:12) {
- points(rep(i, 15),M_corr[i,], pch=16, cex=0.75, 
-       col=ifelse(i<=6, rgb(0.1,0.1,0.1,alpha=0.7), rgb(0,0,1, alpha=0.75))) 
-}
-
-#And R?
-par(mfrow=c(1,1), mar=c(4,4,4,4))
-plot(NULL, ylim=c(-1,1), xlim=c(0.5,12.5), bty="L",
-     ylab="Correlation")
-abline(h=0, lty=2, lwd=1.25, col="grey30")
-R_corr<-matrix(unlist(lapply(R_list, function (x) psych::cor.smooth(x)[lower.tri(x)])), ncol=15, byrow=TRUE)
-apply(R_corr[1:6,], 2, function (x) lines(1:6, x, col="black"))
-apply(R_corr[7:12,], 2, function (x) lines(7:12, x, col="green"))
-for (i in 1:12) {
- points(rep(i, 15),R_corr[i,], pch=16, cex=0.75, 
-       col=ifelse(i<=6, rgb(0.1,0.1,0.1,alpha=0.7), rgb(0,1,0, alpha=0.75))) 
-}
-
-par(mfrow=c(1,1), mar=c(4,4,4,4))
-plot(NULL, ylim=c(-0.5,1), xlim=c(0.5,12.5), bty="L",
-     ylab="Covaraince")
-abline(h=0, lty=2, lwd=1.25, col="grey30")
-R_corr<-matrix(unlist(lapply(R_list, function (x) x[lower.tri(x)])), ncol=15, byrow=TRUE)
-apply(R_corr[1:6,], 2, function (x) lines(1:6, x, col="black"))
-apply(R_corr[7:12,], 2, function (x) lines(7:12, x, col="green"))
-for (i in 1:12) {
- points(rep(i, 15),R_corr[i,], pch=16, cex=0.75, 
-       col=ifelse(i<=6, rgb(0.1,0.1,0.1,alpha=0.7), rgb(0,1,0, alpha=0.75))) 
-}
-
-```
 
 
-```{r Krzanowksi's H Common Subspaces}
-
-# Looking at Krzanowksi's H eigvec projections through M ------------------
-# taken from Mitteroecker Method for Vl.R
-# For chapter - get H
-# apply(evolqg::KrzSubspace(M_list, 3)$H, 2, function(x) sprintf("%.3f", x)) %>% View()
 
 
-evolqg::KrzSubspace(M_list, 3)$k_eVec_H ->H_vecs
+# Section 3. Krzanowksi's Common Subspaces, H ------------------
+# Part A. Implement Krzanowksi's method, and generate eigenanalysis and null distributions 
+# First, get 10,000 REML-MVN h matrices
 
-Var_HeigVecs<-array(0, dim=c(1,m,3))
-for(j in c(1:3)){#number of eigenvecotrs of H
-  for (i in c(1:m)) {
-    t(H_vecs[,j]) %*% M_array[,,i] %*% t(t(H_vecs[,j])) ->Var_HeigVecs[,i,j]
+# using the first 3 largest eigenvectors from M to determine in H
+# then saving the eigenvectors of H
+H_vecs <- evolqg::KrzSubspace(M_list, 3)$k_eVec_H
+
+n_cores <- detectCores()-1
+cluster <- makeCluster(n_cores)
+doParallel::registerDoParallel(cluster)
+acomb <- function(...) abind(..., along=3)
+
+remlmvn_H_array <- foreach (i = 1:MVNsample, 
+                         .packages = c('evolqg'), 
+                         .combine='acomb', .multicombine=TRUE) %dopar% {
+                           temp_rml_list <- asplit(AsycovM_array[,,i,], 3)
+                           evolqg::KrzSubspace(temp_rml_list, 3)$H
+                         }
+
+null_H_array <- foreach(i = 1:nullnumber, 
+                        .packages = c('evolqg'), 
+                        .combine='acomb', .multicombine=TRUE) %dopar% {
+                          temp_null_list <- asplit(null_M_array[,,i,], 3)
+                          evolqg::KrzSubspace(temp_null_list, 3)$H
+                        }
+
+parallel::stopCluster(cluster)
+
+dim(remlmvn_H_array)
+dim(null_H_array)
+
+# Get CIs for H eigenvalues
+remlmvn_H_eigvals <- laply(asplit(remlmvn_H_array, 3), 
+                           function(mat) diag(t(H_vecs) %*% mat %*% H_vecs))
+H_eigval_CI <- t(apply(remlmvn_H_eigvals, 2, function(x) rangeFunc95(x)[2:3]))
+
+H_eigval_CI <- cbind(as.integer(row.names(H_eigval_CI)), evolqg::KrzSubspace(M_list, 3)$k_eVals_H,
+                     H_eigval_CI)
+colnames(H_eigval_CI)<- c("vec_num","H_eigval", "CI_lo", "CI_up")
+
+H_eigval_CI <- setDT(as.data.frame(H_eigval_CI))
+
+H_eigval_CI$Est <- "Obs"
+
+# Get mean and CIs for the null
+avg_null_H <- apply(null_H_array, 1:2, mean)
+avg_null_H_vecs <- eigen(avg_null_H)$vectors[,1:3]
+
+null_H_eigvals <- laply(asplit(null_H_array, 3), 
+                           function(mat) diag(t(avg_null_H_vecs) %*% mat %*% avg_null_H_vecs))
+null_H_CI <- t(apply(null_H_eigvals, 2, function(x) rangeFunc95(x)[2:3]))
+
+null_H_CI <- cbind(as.integer(row.names(null_H_CI)),
+                   eigen(avg_null_H)$values[1:3], null_H_CI)
+colnames(null_H_CI)<- c("vec_num","H_eigval", "CI_lo", "CI_up")
+
+null_H_CI <- setDT(as.data.frame(null_H_CI))
+
+null_H_CI$Est <- "Null"
+
+# Recreate Dave's Figure 3.
+par(mfrow=c(1,1), mar=c(4, 4.5,3, 1.5))
+plot(NULL, ylim=c(0,12), xlim=c(0.5,3.5),bty="L",xaxt="n",las=2,
+     xlab=expression("Eigenvectors of"~bold(H)), #family = "Times New Roman"
+     ylab=expression("Eigenvalues of"~bold(H)~"\u00B1 95% CI"))
+H_eigval_CI[,segments(vec_num-0.25,CI_lo,vec_num-0.25,CI_up)]
+H_eigval_CI[,segments(vec_num-0.20,CI_lo,vec_num-0.30,CI_lo)]
+H_eigval_CI[,segments(vec_num-0.20,CI_up,vec_num-0.30,CI_up)]
+H_eigval_CI[,points(vec_num-0.25, H_eigval, pch=16)]
+axis(side=1,family = "Times New Roman",at=1:3, as.expression(lapply(1:3, function(i)bquote(italic("h")[.(i)]))))
+null_H_CI[,segments(vec_num+0.25,CI_lo,vec_num+0.25,CI_up, lty=2)]
+null_H_CI[,segments(vec_num+0.20,CI_lo,vec_num+0.30,CI_lo, lty=2)]
+null_H_CI[,segments(vec_num+0.20,CI_up,vec_num+0.30,CI_up, lty=2)]
+null_H_CI[,points(vec_num+0.25, H_eigval)]
+legend("bottomright", c("Observed", "Randomised"), bty="n", 
+       pch=c(16,21), lty=c(1,2))
+
+
+# Part B. Explore the amount of among-line variance each h eigenvector captures
+# Looking at Krzanowksi's H eigvec projections through M 
+Var_HeigVecs<-array(0, dim=c(1, p ,3))
+for(j in c(1:3)){#number of eigenvectors of H
+  for (i in c(1:p)) {
+    Var_HeigVecs[,i,j] <- t(H_vecs[,j]) %*% M_array[,,i] %*% t(t(H_vecs[,j]))
   }
 }
+
 # Get CIS
-AsycovHeigVecs_array<-array(0, dim=c(1,1, MVNsample, m, 3))
-for(j in c(1:3)){#number of eigenvecotrs of H
-  for (i in c(1:m)) {
+AsycovHeigVecs_array<-array(0, dim=c(1,1, MVNsample, p, 3))
+for(j in c(1:3)){#number of eigenvectors of H
+  for (i in c(1:p)) {
     for (k in 1:MVNsample){
-      t(H_vecs[,j]) %*% AsycovM_array[,,k,i] %*% t(t(H_vecs[,j])) ->AsycovHeigVecs_array[,,k,i,j]
+      AsycovHeigVecs_array[,,k,i,j] <- t(H_vecs[,j]) %*% AsycovM_array[,,k,i] %*% t(t(H_vecs[,j]))
     }
   }
 }
 
-#Now Through R
-Var_HeigVecs_R<-array(0, dim=c(1,m,3))
-for(j in c(1:3)){#number of eigenvecotrs of H
-  for (i in c(1:m)) {
-    t(H_vecs[,j]) %*% R_array[,,i] %*% t(t(H_vecs[,j])) ->Var_HeigVecs_R[,i,j]
-  }
-}
-# Get CIS
-AsycovHeigVecs_array_R<-array(0, dim=c(1,1, MVNsample, m, 3))
-for(j in c(1:3)){#number of eigenvecotrs of H
-  for (i in c(1:m)) {
-    for (k in 1:MVNsample){
-      t(H_vecs[,j]) %*% AsycovR_array[,,k,i] %*% t(t(H_vecs[,j])) ->AsycovHeigVecs_array_R[,,k,i,j]
-    }
-  }
-}
 
 
 # setEPS()
@@ -716,7 +496,7 @@ H_thru_MnR[, pop:=c(unlist(names(M_list)[p])), by=.I]
 H_thru_MnR[,c("var","Lo", "Hi"):=0]
 
 for(j in c(1:3)){#number of eigenvecotrs of H
-  for (i in c(1:m)) {
+  for (i in c(1:p)) {
     H_thru_MnR[p==i & Hvec==j & parm=="M", var:= Var_HeigVecs[,i,j]]
     tempCI=rangeFunc90(AsycovHeigVecs_array[,,,i,j])
     H_thru_MnR[p==i & Hvec==j & parm=="M", `:=`(Lo=tempCI[2] , Hi=tempCI[3])]
@@ -749,7 +529,7 @@ for (prm in c("M", "R")) {
       axis(side=2, at=seq(0.4,1.8,0.2), labels = sprintf("%1.1f",seq(0.4,1.8,0.2)), las=2, family = "Times New Roman")
       mtext(LETTERS[j+3], side=3, adj=-0.2, line=1.3,cex=1.2, family = "Times New Roman")
     }
-    for(i in 1:m){
+    for(i in 1:p){
     H_thru_MnR[Hvec==j & parm==prm & p==i] %T>%
         with(segments(x,Lo,x, Hi)) %T>% 
         with(points(x,var, pch=pchy, bg=ifelse(pchy==21, "white", NA))) %T>% 
@@ -778,7 +558,7 @@ for (j in c(1:3)) {
   axis(side=1, at=seq(0.6,1.5,0.2), family = "Times New Roman", labels = sprintf("%1.1f",seq(0.6,1.5,0.2)))
   axis(side=2, at=seq(0,0.5,0.1), family = "Times New Roman", labels = seq(0,0.5,0.1), las=2)
   mtext(LETTERS[j+6], side=3, adj=-0.2, line=1.3,cex=1.2, family = "Times New Roman")
-  for(i in 1:m){
+  for(i in 1:p){
     H_thru_MnR_w[Hvec==j & p==i] %T>% 
       with(points(var_R,var_M, pch=pchy, bg=ifelse(pchy==21, "white", NA))) %>% 
       with(text(var_R,var_M,Gen,pos=2,cex=0.95, family = "Times New Roman"))
@@ -1124,7 +904,7 @@ colnames(REML_S_eigtenvals_Tab)<-c("Ek", paste0("e",1:6))
 
 ```{r Stability in M}
 # Eccentricity_CI<-data.frame(NULL)
-# for (i in 1:m) {
+# for (i in 1:p) {
 #   M_vec<-eigen(M_list[[i]])$vector
 #   prj_Meigvec<-array(0, dim=c(MVNsample,6))
 #   for (j in 1:6) {
@@ -1139,7 +919,7 @@ colnames(REML_S_eigtenvals_Tab)<-c("Ek", paste0("e",1:6))
 # plot(NULL, ylim=c(0,1), ylab="Eccentricity of M \u00B1 90% CI", 
 #      xlim=c(0.5, 6.5),bty="L", xlab="Generations")
 # abline(h=1, lty=2)
-# for (i in 1:m) {
+# for (i in 1:p) {
 #   ecc<-(eigen(M_list[[i]])$value[1])/sum(eigen(M_list[[i]])$value[1:6])
 #   if (i<=6){
 #     points(i-0.1, ecc, pch=16)
@@ -1206,7 +986,7 @@ VLcoordsMVN<-array(0,dim=c(1,1,m,neigten,MVNsample))
 
 for (i in 1:MVNsample) {
   for (j in 1:neigten) {
-    for (k in 1:m){
+    for (k in 1:p){
       frobenius.prod(REML_S_eigTenmat[,,j], AsycovM_array[,,i,k])->VLcoordsMVN[,,k,j,i]
     }
   }
@@ -1215,7 +995,7 @@ for (i in 1:MVNsample) {
 m=12
 CoordVL_CIs<-as.data.frame(NULL)
 for (j in 1:neigten) {
-  for (k in 1:m){
+  for (k in 1:p){
     VLcoordsMVN[,,k,j,] %>% rangeFunc90() %>% t %>% as.data.frame %>% 
       magrittr::set_colnames(.,c("n", "lowCI", "upCI")) %>% 
       mutate(pop=k, cord_Eig=paste0("C_E",j)) %>% 
@@ -1420,7 +1200,7 @@ VLthruRcoordsMVN<-array(0,dim=c(1,1,m,neigten,MVNsample))
 
 for (i in 1:MVNsample) {
   for (j in 1:neigten) {
-    for (k in 1:m){
+    for (k in 1:p){
       frobenius.prod(REML_S_eigTenmat[,,j], AsycovR_array[,,i,k])->VLthruRcoordsMVN[,,k,j,i]
     }
   }
@@ -1429,7 +1209,7 @@ for (i in 1:MVNsample) {
 m=12
 CoordVLthruR_CIs<-as.data.frame(NULL)
 for (j in 1:neigten) {
-  for (k in 1:m){
+  for (k in 1:p){
     VLthruRcoordsMVN[,,k,j,] %>% rangeFunc90() %>% t %>% as.data.frame %>% 
       magrittr::set_colnames(.,c("n", "lowCI", "upCI")) %>% 
       mutate(pop=k, cord_Eig=paste0("C_E",j)) %>% 
@@ -1441,7 +1221,7 @@ CoordVLthruR_CIs[,EigNum:=as.numeric(gsub("C_E", "",cord_Eig))]
 CoordVLthruR_CIs[,p:=as.numeric(pop)]
 CoordVLthruR_CIs[,Coord:=0]
 for (i in 1:neigten) {
-  for (j in 1:m) {
+  for (j in 1:p) {
     CoordVLthruR_CIs[EigNum==i & p==j]$Coord<-frobenius.prod(REML_S_eigTenmat[,,i], R_list[[j]])
   }
 }

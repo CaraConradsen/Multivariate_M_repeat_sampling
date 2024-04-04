@@ -93,7 +93,7 @@ Mfilenames <- list.files(path = un_cov_dir, pattern = "Covparms")
 # create a function to import M and convert the column list into a 6 x 6 matrix
 import_M <- function(mlist_name){
   Mdf <- fread(paste(un_cov_dir,mlist_name, sep = "/"))[Subject == "Line",.(Estimate)] 
-  M <- matrix(0, nrow = n , ncol = n)
+  M <- matrix(NA, nrow = n , ncol = n)
   upperTriangle(M, diag = TRUE) <- Mdf$Estimate
   lowerTriangle(M) = upperTriangle(M, byrow = TRUE)
   return(M)
@@ -104,11 +104,11 @@ names(M_list) <- gsub(".csv","", gsub("Covparms","", Mfilenames))
 
 
 #create the M and V arrays
-M_array <- array(0, dim = c(n, n, p))
+M_array <- array(NA, dim = c(n, n, p))
 for (i in 1:p){M_array[,,i] <- M_list[[i]]}
 dimnames(M_array) <- list(traitnumber, traitnumber, names(M_list))
 
-V_array <- array(0, dim=c((n*(n+1)/2), (n*(n+1)/2), p))
+V_array <- array(NA, dim=c((n*(n+1)/2), (n*(n+1)/2), p))
 for (i in 1:p){V_array[,,i] <- V_list[[i]]}
 dimnames(V_array)[[3]] <- names(V_list)
 
@@ -118,19 +118,19 @@ theta_list <- sapply(Mfilenames, function (x)
   fread(paste(un_cov_dir, x, sep = "/"))[Subject == "Line",.(Estimate)])
 names(theta_list) <- gsub(".csv", "", gsub("Covparms", "", Mfilenames))  
 
-theta_array <- array(0, dim=c((n*(n+1)/2), 1, p))
+theta_array <- array(NA, dim=c((n*(n+1)/2), 1, p))
 for (i in c(1:p)){theta_array[,,i] <- theta_list[[i]]}
 dimnames(theta_array)[[3]] <- names(theta_list)
 
 # Create array for 10,000 REML-MVN data
-AsycovM_array<-array(0, dim=c(n, n, MVNsample, p)) 
+AsycovM_array<-array(NA, dim=c(n, n, MVNsample, p)) 
 
 # The loop for REML-MVN 
 set.seed(42)
 for (i in c(1:p)){ 
   reps <- mvrnorm(n=MVNsample, theta_array[,,i], V_array[,,i])
   for (j in c(1:MVNsample)){
-    M <- matrix(0, nrow = n, ncol = n)
+    M <- matrix(NA, nrow = n, ncol = n)
     lowerTriangle(M, diag = TRUE, byrow = TRUE) <- reps[j,]
     upperTriangle(M) = lowerTriangle(M, byrow = TRUE)
     AsycovM_array[,,j,i] <- M
@@ -159,7 +159,7 @@ rando_M_import <- function(filenum){
   null_M_df <- fread(null_Mfilenames[filenum])[Subject == "Line"]
   rand_rep_vec <- sort(unique(null_M_df$RandRep))
   ngens = p/2
-  null_array  <- array(0, dim=c(n, n, length(rand_rep_vec), p))
+  null_array  <- array(NA, dim=c(n, n, length(rand_rep_vec), p))
   dimnames(null_array) <- list(traitnumber, traitnumber,rand_rep_vec, names(M_list))
   for (j in rand_rep_vec) {
     num_name_rep <- as.character(j)
@@ -252,20 +252,24 @@ for (i in 1:p) {
   TraceM<-rbind(TraceM, tr(M_list[[i]]))
 }
 
+n_cores <- detectCores()-1
+cluster <- makeCluster(n_cores)
+doParallel::registerDoParallel(cluster)
+acomb <- function(...) abind(..., along=4)
 
 # Get CIs for Eigenvectors
-EigenMCI_array<-array(0, dim=c(1, n, MVNsample, p))
 stattime =Sys.time()
-for (mat in 1:p) {
-  for (i in 1:MVNsample) {
-    for (vec in 1:n) {
-      tmpVec<-t(eigen(M_list[[mat]])$vector[,vec])
-      EigenMCI_array[,vec,i,mat] <- tmpVec %*% 
-        AsycovM_array[,,i,mat] %*% 
-        t(tmpVec)
-    }
-  }
-};end=Sys.time()-stattime; end #Time difference of 3.025336 mins
+tmpVec <- lapply(M_list, function(x) t(eigen(x)$vector))
+EigenMCI_array <- foreach (i = 1:MVNsample,  
+                           .combine='acomb', .multicombine=TRUE) %dopar% {
+                             tmpAry <- sapply(seq_along(1:p), function(x){
+                               diag(tmpVec[[x]] %*% AsycovM_array[,,i,x] %*% t(tmpVec[[x]]))
+                             })
+                             array(c(tmpAry), dim=c(1,n,p))
+                           }
+end=Sys.time()-stattime; end #Time difference of 13.30392 secs
+parallel::stopCluster(cluster)
+dim(EigenMCI_array)
 
 EigenM_CI_tab<-data.frame(NULL)
 for (mat in 1:p) {
@@ -273,7 +277,7 @@ for (mat in 1:p) {
     EigenM_CI_tab <- rbind(EigenM_CI_tab, 
                            c(names(M_list)[[mat]],paste0("e",i),
                              eigen(M_list[[mat]])$values[i], 
-                             rangeFunc90(EigenMCI_array[,i,,mat])[2:3]))
+                             rangeFunc90(EigenMCI_array[,i,mat,])[2:3]))
   }
 }
 colnames(EigenM_CI_tab)<-c("M", "eigV", "Lambda", "Lo", "Hi")
@@ -370,11 +374,223 @@ axis(side=1,family = "Times New Roman",at=1:6, as.expression(lapply(1:6, functio
 mtext("B", 3, family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
 # dev.off()
 
+# Section 3. Residual Varaince (not included in MS) -----------------
+# Get observed R matrices from REML
+# create a function to import M and convert the column list into a 6 x 6 matrix
+import_R <- function(mlist_name){
+  Rdf <- fread(paste(un_cov_dir,mlist_name, sep = "/"))[Subject == "Anim(Trea*Line*Vial)",.(Estimate)] 
+  R <- matrix(NA, nrow = n , ncol = n)
+  upperTriangle(R, diag = TRUE) <- Rdf$Estimate
+  lowerTriangle(R) = upperTriangle(R, byrow = TRUE)
+  return(R)
+}
+R_list <- lapply(Mfilenames, import_R)
+
+names(R_list) <- gsub(".csv","", gsub("Covparms","", Mfilenames)) 
+
+
+VR_list <- lapply(Vfilenames, function (x) 
+  as.matrix(fread(paste(un_cov_dir, x, sep = "/"))[c(43:63), c(45:65)]))
+
+names(VR_list) <- gsub(".csv","", gsub("Asycov","", Vfilenames)) 
+
+
+#create the R and (R) V arrays and theta (R) arrays
+R_array <- array(NA, dim = c(n, n, p))
+for (i in 1:p){R_array[,,i] <- R_list[[i]]}
+dimnames(R_array) <- list(traitnumber, traitnumber, names(M_list))
+
+# Get asycov for residuals
+VR_array<- array(0,dim=c((n*(n+1)/2),(n*(n+1)/2),p))
+for (i in 1:p){VR_array[,,i] <- VR_list[[i]]}
+dimnames(VR_array)[[3]]<-names(R_list)
+
+theta_R_list <- sapply(Mfilenames, function (x)
+  fread(paste(un_cov_dir, x, sep = "/"))[Subject == "Anim(Trea*Line*Vial)",.(Estimate)])
+names(theta_R_list) <- gsub(".csv", "", gsub("Covparms", "", Mfilenames))  
+
+theta_R_array <- array(NA, dim=c((n*(n+1)/2), 1, p))
+for (i in c(1:p)){theta_R_array[,,i] <- theta_R_list[[i]]}
+dimnames(theta_R_array)[[3]] <- names(theta_R_list)
 
 
 
 
-# Section 3. Krzanowksi's Common Subspaces, H ------------------
+# Create array for 10,000 REML-MVN data
+AsycovR_array<-array(0, dim=c(n, n, MVNsample, p)) 
+
+# The loop for REML-MVN 
+set.seed(42)
+for (i in c(1:p)){ 
+  reps_R<-mvrnorm(n=MVNsample, theta_R_array[,,i], VR_array[,,i])
+  for (j in c(1:MVNsample)){
+    # R
+    R<-matrix(0, nrow=n, ncol=n)
+    lowerTriangle(R, diag=TRUE, byrow=TRUE)<-reps_R[j,]
+    upperTriangle(R) = lowerTriangle(R, byrow=TRUE)
+    AsycovR_array[,,j,i]<-R
+  }
+}
+
+
+R_tab<-data.frame(NULL)
+for (mat in 1:p) {
+  for (j in 1:nrow(comb)) {
+    resid<-sprintf("%.3f",R_list[[mat]][comb[j,1],comb[j,2]])
+    resid_ci<-paste(sprintf("%.3f",rangeFunc90(AsycovR_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+    R_tab<-rbind(R_tab,cbind(names(R_list)[[mat]],comb[j,1],comb[j,2], resid,resid_ci))
+  }
+}
+setDT(R_tab)
+R_tab[, c("Treat","Gen") := data.table(str_split_fixed(V1,"_",2))]
+R_tab<-melt(R_tab[,-1],id.var=c("Treat", "Gen", "V2", "V3"), measure.vars = c("resid","resid_ci") )
+dcast(R_tab, Gen+variable+V3~Treat+V2, value.var=c("value"))->R_tab
+setorderv(R_tab, c("Gen", "V3"), c(1,1))
+R_tab[is.na(R_tab)]<-""
+# write.table(R_tab, file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/R_tab_CI.txt",
+#           row.names = FALSE, quote=TRUE, sep="\t")
+
+
+# Get CIs for Eigenvectors
+EigenRCI_array<-array(0, dim=c(1, n, MVNsample, p))
+stattime =Sys.time()
+for (mat in 1:p) {
+  for (i in 1:MVNsample) {
+    for (vec in 1:n) {
+      tmpVec<-t(eigen(R_list[[mat]])$vector[,vec])
+      EigenRCI_array[,vec,i,mat] <- tmpVec %*%
+        AsycovR_array[,,i,mat] %*%
+        t(tmpVec)
+    }
+  }
+};end=Sys.time()-stattime; end #Time difference of 3.135797 mins
+
+EigenR_CI_tab<-data.frame(NULL)
+for (mat in 1:p) {
+  for (i in 1:n) {
+    EigenR_CI_tab <- rbind(EigenR_CI_tab,
+                           c(names(R_list)[[mat]],paste0("e",i),
+                             eigen(R_list[[mat]])$values[i],
+                             rangeFunc90(EigenRCI_array[,i,,mat])[2:3]))
+  }
+}
+colnames(EigenR_CI_tab)<-c("R", "eigV", "Lambda", "Lo", "Hi")
+EigenR_CI_tab<-cbind(EigenR_CI_tab[,1:2],
+                     apply(EigenR_CI_tab[,3:5], 2, function(x) sprintf("%.3f", as.numeric(x))))
+setDT(EigenR_CI_tab)
+EigenR_CI_tab[, CI:= paste(Lo, Hi, sep = "; "), by=c("R", "eigV")]
+EigenR_CI_tab[, c("Treat","Gen") := data.table(str_split_fixed(R,"_",2))]
+EigenR_CI_tab->EigenR_CI_tab_plot
+
+EigenR_CI_tab<-melt(EigenR_CI_tab[,.(Treat, Gen, eigV, Lambda, CI)],
+                    id.var=c("Treat", "Gen", "eigV"), measure.vars = c("Lambda","CI"))
+dcast(EigenR_CI_tab, Treat+Gen+variable~eigV, value.var=c("value"))->EigenR_CI_tab
+EigenR_CI_tab[,Gen2:=fcase(variable=="Lambda", Gen,
+                           default = "")]
+EigenR_CI_tab[, Treat2:=fcase(Treat==1 & Gen==1 & variable=="Lambda", "Small",
+                              Treat==3 & Gen==1 & variable=="Lambda", "Large",
+                              default = "")]
+
+# write.table(EigenR_CI_tab[,c(1:3,10:11,4:9)], file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/EigenR_CI_tab.txt",
+# row.names = FALSE, quote = TRUE, sep="\t")
+
+#plot CIs to confirm overlap
+EigenR_CI_tab_plot[, e:=as.numeric(gsub("e","", eigV))]
+as.data.table(apply(EigenR_CI_tab_plot[,c(3:5,7:9)], 2, function(x) as.numeric(x)))->EigenR_CI_tab_plot
+setDT(EigenR_CI_tab_plot)
+EigenR_CI_tab_plot[, ID := .I]
+
+par(mfrow=c(1,1),mar=c(4,8,0.2,4))
+plot(NULL, xlim=c(0, 2),yaxt="n",ylab="", xlab="Variance", ylim=c(1,72), bty="L")
+axis(side=2,at=c(18,54), tick = FALSE,las=2, labels = c("Small", "Large"), line=3)
+axis(side=2, at=seq(0,66, length.out=12), line=1.5, tick=FALSE,labels = rep(1:6,2), las=2)
+axis(side=2, at=1:72, labels = rep(paste0("e", 1:6),12), cex.axis=0.5, las=2)
+abline(v=0,lty=2)
+for (trt in c(1,3)) {
+  for (g in 1:6) {
+    for (ev in 1:6){
+      EigenR_CI_tab_plot[Treat==trt& Gen==g & e==ev] %T>% 
+        with(segments(Lo, ID, Hi, ID, lwd=ifelse(Lo>0,2,1), 
+                      col=ifelse(Lo>0 & Lambda>0, "blue",
+                                 ifelse(trt==1, 1, 2)))) %>% 
+        with(points(Lambda, ID,col=ifelse(Lo>0 & Lambda>0, "blue",
+                                          ifelse(trt==1, 1, 2)), pch=16, cex=0.95))
+    }
+    
+  }
+}
+EigenR_CI_tab_plot[, Totvar:=tr(R_list[[grep(paste(Treat,Gen,sep="_"),M_names)]]), by="ID"]
+EigenR_CI_tab_plot[,PropVar:= round((Lambda/Totvar)*100,2), by="ID"]
+
+par(mfrow=c(1,1))
+EigenR_CI_tab_plot[e==1, .(PropVar, e)] %>%
+  with(boxplot(PropVar ~ e,
+               xlim=c(0,7), ylim=c(0,50),
+               xlab="Eigenvectors",bty="L",
+               ylab="Propotion of varaince (%)"))
+for (i in 2:n) {
+  EigenR_CI_tab_plot[e==i, .(PropVar, e)] %>% 
+    with(boxplot(PropVar~e,at=i, add=TRUE,  boxwex=0.55))
+}
+mean(EigenR_CI_tab_plot[e==1, PropVar])
+mean(EigenR_CI_tab_plot[e==2, PropVar])
+
+# Chapter Figure
+R_MVN_trace_CI<-as.data.frame(t(apply(apply(AsycovR_array[,,,], c(3,4), 
+                                            function (x) tr(x)), 2, rangeFunc90)))
+setDT(R_MVN_trace_CI)
+colnames(R_MVN_trace_CI)<-c("n","lo","hi")
+R_MVN_trace_CI[, p:=.I]
+R_MVN_trace_CI$Trace<-unlist(lapply(R_list, tr))
+R_MVN_trace_CI[, x:=fcase(p <=6, p-0.15,
+                          p>6, p - 5.85, default=0)]
+
+R_eigenVectors<-matrix(unlist(lapply(R_list, 
+                                     function (x) eigen(x)$value)), ncol=6, byrow=TRUE)
+R_eigenVectors<-as.data.frame(apply(R_eigenVectors,2,"/", t(unlist(lapply(R_list, tr))))*100)
+setDT(R_eigenVectors)
+colnames(R_eigenVectors)<-paste0("e", 1:6)
+R_eigenVectors[,p:=.I]
+melt(R_eigenVectors, id.vars = "p")->R_eigenVectors
+R_eigenVectors$variable<-factor(R_eigenVectors$variable, levels=paste0("e", 1:6))
+
+# svglite(filename = "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/R_traceNeigs.svg",
+#     width = 7, height = 3.6, pointsize = 11,
+#     bg = "white", system_fonts = "Times New Roman")
+
+grDevices::cairo_ps(filename =
+                      "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/R_traceNeigs.eps", 
+                    family = "Times", bg="transparent",pointsize=11, width = 7, height = 3.6)
+# R traces
+par(mfrow=c(1,2), mar=c(4, 4.5,3, 1.5))
+plot(NULL, ylim=c(0,6), xlim=c(0.5,6.5),bty="L",yaxt="n",
+     xlab="Generations", family = "Times New Roman",
+     ylab=expression("Traces of "~bold(R)~"\u00B1 90% CI"))
+axis(side=2, at=seq(0,6),family = "Times New Roman", labels = sprintf("%.1f",seq(0,6)), las=2)
+R_MVN_trace_CI[,segments(x,lo,x,hi)]
+R_MVN_trace_CI[,segments(x-0.05,lo,x+0.05,lo)]
+R_MVN_trace_CI[,segments(x-0.05,hi,x+0.05,hi)]
+R_MVN_trace_CI[, points(x,Trace, pch=ifelse(p<=6, 16,21),
+                        bg=ifelse(p<=6, "NA","white"))]
+mtext("A", 3,family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
+
+R_eigenVectors %>% 
+  with(plot(NULL, xlim=c(0.5,6.5), 
+            xlab="",yaxt="n",bty="L",
+            ylab="",xaxt="n", 
+            yaxs="i", ylim=c(0,40)))
+R_eigenVectors[,boxplot(value~variable,col="white",
+                        yaxt="n",pch=4,xaxt="n",frame=F,boxwex=0.35, add = TRUE)]
+axis(side=1,at=3.5, family = "Times New Roman", "Eigenvectors", line=2, tick = FALSE)
+axis(side=2,at=20, family = "Times New Roman", "Proportion of residual variance", line=2, tick = FALSE)
+axis(side=2, family = "Times New Roman",at=seq(0,40, 5),paste0(seq(0,40, 5),"%"), las=2)
+axis(side=1,family = "Times New Roman",at=1:6, as.expression(lapply(1:6, function(i)bquote(italic("e")[.(i)]))))
+mtext("B", 3, family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
+# dev.off()
+
+
+
+# Section 4. Krzanowksi's Common Subspaces, H ------------------
 # Part A. Implement Krzanowksi's method, and generate eigenanalysis and null distributions 
 # First, get 10,000 REML-MVN h matrices
 
@@ -407,11 +623,14 @@ dim(remlmvn_H_array)
 dim(null_H_array)
 
 # Get CIs for H eigenvalues
-remlmvn_H_eigvals <- laply(asplit(remlmvn_H_array, 3), 
-                           function(mat) diag(t(H_vecs) %*% mat %*% H_vecs))
+# Calculate the eigenvalues for each of the 10,000 H matrices for the CIs
+remlmvn_H_eigvals <- foreach(i = 1:MVNsample, 
+                             .combine='rbind') %do% {
+                               eigen(remlmvn_H_array[,,i])$value[1:3]
+                             }
 H_eigval_CI <- t(apply(remlmvn_H_eigvals, 2, function(x) rangeFunc95(x)[2:3]))
 
-H_eigval_CI <- cbind(as.integer(row.names(H_eigval_CI)), evolqg::KrzSubspace(M_list, 3)$k_eVals_H,
+H_eigval_CI <- cbind(1:3, evolqg::KrzSubspace(M_list, 3)$k_eVals_H,
                      H_eigval_CI)
 colnames(H_eigval_CI)<- c("vec_num","H_eigval", "CI_lo", "CI_up")
 
@@ -453,9 +672,28 @@ legend("bottomright", c("Observed", "Randomised"), bty="n",
        pch=c(16,21), lty=c(1,2))
 
 
+# Create a table
+H_tab <- rbind(H_eigval_CI,null_H_CI)
+
+H_tab <- cbind(H_tab$Est, paste0("h",H_tab$vec_num),
+               apply(H_tab[,2:4], 2, function(x) sprintf("%.2f", as.numeric(x))))
+
+colnames(H_tab) <- c("Est", "eigV", "Lambda", "Lo", "Hi")
+H_tab <- as.data.table(H_tab)
+H_tab[, CI:= paste(Lo, Hi, sep = "; "), by=c("Est", "eigV")]
+
+H_tab <- melt(H_tab[,.(Est, eigV, Lambda, CI)], 
+              measure.vars = c("Lambda","CI"))
+
+H_tab <- dcast(H_tab,Est+variable~eigV)
+
+# write.table(H_tab, file =paste(".",outdir_tab,"EigH_tab.txt", sep="/"),
+# row.names = FALSE, quote = TRUE, sep="\t")
+
+
 # Part B. Explore the amount of among-line variance each h eigenvector captures
 # Looking at Krzanowksi's H eigvec projections through M 
-Var_HeigVecs<-array(0, dim=c(1, p ,3))
+Var_HeigVecs<-array(NA, dim=c(1, p ,3))
 for(j in c(1:3)){#number of eigenvectors of H
   for (i in c(1:p)) {
     Var_HeigVecs[,i,j] <- t(H_vecs[,j]) %*% M_array[,,i] %*% t(t(H_vecs[,j]))
@@ -463,7 +701,7 @@ for(j in c(1:3)){#number of eigenvectors of H
 }
 
 # Get CIS
-AsycovHeigVecs_array<-array(0, dim=c(1,1, MVNsample, p, 3))
+AsycovHeigVecs_array<-array(NA, dim=c(1,1, MVNsample, p, 3))
 for(j in c(1:3)){#number of eigenvectors of H
   for (i in c(1:p)) {
     for (k in 1:MVNsample){
@@ -586,7 +824,7 @@ for (j in c(1:3)) {
 # Tensor Analysis for REML estimates ONLY ---------------------------
 # Construction of M covariance tensor S using REML estimates [Dave's Method]
 neigten<-n*(n+1)/2
-REML_S<-array(0, dim=c(neigten,neigten))
+REML_S<-array(NA, dim=c(neigten,neigten))
 dimnames(REML_S)<-list(paste0("e", 1:neigten), paste0("e", 1:neigten))
 REML_M<-M_array
 REML_Mvarmat<-t(apply(REML_M, 3, diag))
@@ -602,10 +840,10 @@ REML_S_eigvec <- eigen(REML_S)$vectors
 REML_S_eigval <- eigen(REML_S)$values
 
 # Now need to create the Eigentensors
-REML_S_eigTenmat<-array(0, dim=c(n,n,neigten))
+REML_S_eigTenmat<-array(NA, dim=c(n,n,neigten))
 dimnames(REML_S_eigTenmat)<-list(traitnumber, traitnumber,paste0("E", 1:neigten))
 for (i in 1:neigten){
-  REML_emat<-matrix(0,n,n)
+  REML_emat<-matrix(NA,n,n)
   lowerTriangle(REML_emat)<-1/sqrt(2)*REML_S_eigvec[(n+1):neigten,i]
   REML_emat<-REML_emat+t(REML_emat)
   diag(REML_emat)<-REML_S_eigvec[1:n,i]
@@ -660,7 +898,7 @@ cords_Meigten %>% magrittr::set_colnames(c("pop", "m_name","cord_Eig", "Coord"))
 # Create Dave's Fig. 4 ----------------------------------------------------
 # Get 10,000 S matrices from the 10,000 REML-MVN M matrix sets 
 neigten<-n*(n+1)/2
-MVN_S<-array(0, dim=c(neigten,neigten,MVNsample))
+MVN_S<-array(NA, dim=c(neigten,neigten,MVNsample))
 dimnames(MVN_S)<-list(paste0("e", 1:neigten), paste0("e", 1:neigten))
 for (i in 1:MVNsample){
   # 1. Construction of M covariance tensor
@@ -682,7 +920,7 @@ REML_S_val <- eigen(REML_S)$values
 REML_S_vec <- eigen(REML_S)$vectors
 
 
-MVN_S_val <- matrix(0, MVNsample, neigten)
+MVN_S_val <- matrix(NA, MVNsample, neigten)
 colnames(MVN_S_val) <- paste("E", 1:neigten, sep="")
 for (i in 1:MVNsample){
   for(j in 1:neigten){
@@ -906,7 +1144,7 @@ colnames(REML_S_eigtenvals_Tab)<-c("Ek", paste0("e",1:6))
 # Eccentricity_CI<-data.frame(NULL)
 # for (i in 1:p) {
 #   M_vec<-eigen(M_list[[i]])$vector
-#   prj_Meigvec<-array(0, dim=c(MVNsample,6))
+#   prj_Meigvec<-array(NA, dim=c(MVNsample,6))
 #   for (j in 1:6) {
 #     prj_Meigvec[,j]<-apply(AsycovM_array[,,,i],3, function (x) t(M_vec[,j]) %*% x %*% t(t(M_vec[,j])))
 #   }
@@ -982,7 +1220,7 @@ rad2deg(acos(t(eigen(M_list[[1]])$vector[,1])%*% t(t(eigen(M_list[[2]])$vector[,
 #############################################################################################################################
 #get confidence intervals on the VL Coordinates using the 10,00 REML-MVN estimates of M
 # set up Coords array
-VLcoordsMVN<-array(0,dim=c(1,1,m,neigten,MVNsample))
+VLcoordsMVN<-array(NA,dim=c(1,1,m,neigten,MVNsample))
 
 for (i in 1:MVNsample) {
   for (j in 1:neigten) {
@@ -1060,7 +1298,7 @@ for (i in 1:3) {
 ```
 
 ```{r R_eigentensor}
-REML_S_R<-array(0, dim=c(neigten,neigten))
+REML_S_R<-array(NA, dim=c(neigten,neigten))
 dimnames(REML_S_R)<-list(paste0("e", 1:neigten), paste0("e", 1:neigten))
 REML_Rvarmat<-t(apply(R_array, 3, diag))
 REML_Rcovmat<-t(apply(R_array, 3, lowerTriangle))
@@ -1074,7 +1312,7 @@ REML_S_R_eigval <- eigen(REML_S_R)$values
 
 #create MVN-sampling S of R
 # Get 10,000 S matrices from the 10,000 REML-MVN M matrix sets 
-MVN_S_R<-array(0, dim=c(neigten,neigten,MVNsample))
+MVN_S_R<-array(NA, dim=c(neigten,neigten,MVNsample))
 dimnames(MVN_S_R)<-list(paste0("e", 1:neigten), paste0("e", 1:neigten))
 for (i in 1:MVNsample){
   # 1. Construction of M covariance tensor
@@ -1087,7 +1325,7 @@ for (i in 1:MVNsample){
 }
 
 # Get CI for R eigentensors
-MVN_S_R_val <- matrix(0, MVNsample, neigten)
+MVN_S_R_val <- matrix(NA, MVNsample, neigten)
 colnames(MVN_S_R_val) <- paste("E", 1:neigten, sep="")
 for (i in 1:MVNsample){
   for(j in 1:neigten){
@@ -1125,10 +1363,10 @@ axis(1, at=c(1:Eigtenlim), family = "Times New Roman",
 # dev.off()
 
 #Generate the eigentensors matrices
-REML_S_R_eigTenmat<-array(0, dim=c(n,n,neigten))
+REML_S_R_eigTenmat<-array(NA, dim=c(n,n,neigten))
 dimnames(REML_S_R_eigTenmat)<-list(traitnumber, traitnumber,paste0("E", 1:neigten))
 for (i in 1:neigten){
-  REML_emat<-matrix(0,n,n)
+  REML_emat<-matrix(NA,n,n)
   lowerTriangle(REML_emat)<-1/sqrt(2)*REML_S_R_eigvec[(n+1):neigten,i]
   REML_emat<-REML_emat+t(REML_emat)
   diag(REML_emat)<-REML_S_R_eigvec[1:n,i]
@@ -1196,7 +1434,7 @@ mtext("B", 3, outer=FALSE, cex=1.25,family = "Times New Roman", adj=-0.25, line=
 ```{r Coordinates of R eigentensors procected onto M}
 #get confidence intervals on the R Coordinates using the 10,00 REML-MVN estimates of M
 # set up Coords array
-VLthruRcoordsMVN<-array(0,dim=c(1,1,m,neigten,MVNsample))
+VLthruRcoordsMVN<-array(NA,dim=c(1,1,m,neigten,MVNsample))
 
 for (i in 1:MVNsample) {
   for (j in 1:neigten) {
@@ -1285,7 +1523,7 @@ for (i in 1:3) {
 library(vcvComp)
 citation("vcvComp")
 
-Hspace_arrayM<-array(0, dim=c(3,3,12))
+Hspace_arrayM<-array(NA, dim=c(3,3,12))
 for(i in 1:12){
   Hspace_arrayM[,,i]<-t(H_vecs) %*% M_array[,,i] %*% H_vecs
 }
@@ -1295,7 +1533,7 @@ apply(Hspace_arrayM[,,],3,is.positive.definite)
 
 
 # Now, to calculate the D (distance matrix) and get the principle 
-disMAtH_M<-matrix(0, nrow = 12, ncol = 12)
+disMAtH_M<-matrix(NA, nrow = 12, ncol = 12)
 for (i in 1:12){
   k=i
   while (k<=12) {

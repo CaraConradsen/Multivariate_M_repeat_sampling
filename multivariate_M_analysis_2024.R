@@ -239,24 +239,104 @@ while (l < 6) {
 } 
 
 # Calculated the CI for each element in M using the 10,000 REML-MVN AsycovM_array
+# Want 90% for variances, and 95% covariances 
 M_tab<-data.frame(NULL)
 for (mat in 1:p) {
   for (j in 1:nrow(comb)) {
     vl<-sprintf("%.3f",M_list[[mat]][comb[j,1],comb[j,2]])
-    vl_ci<-paste(sprintf("%.3f",rangeFunc90(AsycovM_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+    if (comb[j,1] != comb[j,2]){
+      vl_ci<-paste(sprintf("%.3f",rangeFunc95(AsycovM_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+    } else {
+      vl_ci<-paste(sprintf("%.3f",rangeFunc90(AsycovM_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+    }
     M_tab<-rbind(M_tab,cbind(names(M_list)[[mat]],comb[j,1],comb[j,2], vl,vl_ci))
   }
 }
 setDT(M_tab)
+M_tab_lng <- M_tab # for stacked barchart
 M_tab[, c("Treat","Gen") := data.table(str_split_fixed(V1,"_",2))]
 M_tab <- melt(M_tab[,-1],id.var=c("Treat", "Gen", "V2", "V3"), measure.vars = c("vl","vl_ci") )
 dcast(M_tab, Gen+variable+V3~Treat+V2, value.var=c("value"))->M_tab
 setorderv(M_tab, c("Gen", "V3"), c(1,1))
 M_tab[is.na(M_tab)]<-""
 
-
 # write.table(M_tab, file =paste(".",outdir_tab,"M_tab_CI.txt", sep="/"),
 #           row.names = FALSE, quote = TRUE, sep="\t")
+
+
+# Create a stacked bargraph for the covariances
+M_tab_lng[, "ci_lo":= unlist(strsplit(vl_ci,"; "))[1], by=.I]
+M_tab_lng[, "ci_up":= unlist(strsplit(vl_ci,"; "))[2], by=.I]
+colnames(M_tab_lng)[c(1,3)] <- c("pop", "trait_num")
+M_tab_lng <- cbind(M_tab_lng[,c(1,5)],apply(M_tab_lng[,c(2:4,6:9)],2, as.numeric))
+# Create a trait name dataframe to add back the wing ILDs
+Trait_name = data.frame(trait_num = 1:6, 
+                        trait = c("CS","1.2","1.5", "2.5","2.8", "3.7"))
+M_tab_lng <- merge(M_tab_lng, Trait_name, by= "trait_num")
+colnames(M_tab_lng)[c(1, 4,10)] <- c("trait2_num","trait_num","trait2")
+M_tab_lng <- merge(M_tab_lng, Trait_name, by= "trait_num")
+M_tab_lng[, Sig:= fcase(ci_lo < 0 & ci_up < 0 & vl < 0, 1,
+                        ci_lo > 0 & ci_up > 0 & vl > 0, 1,
+                        default = 0)]
+
+# write.csv(M_tab_lng, file =paste(".",outdir_tab,"M_tab_lng_sig.csv", sep="/"),
+#           row.names = FALSE)
+# Now to count the significant covariances
+M_cov_count <- M_tab_lng[trait_num != trait2_num]
+M_cov_count[, Sign:= fcase(vl >= 0, "pos",
+                           default = "neg") ]
+M_cov_count <- M_cov_count[, .(N = .N), by=c("trait_num","trait2_num", "Sign", "Sig")]
+M_cov_count[,.(N = sum(N)), by=c("trait_num","trait2_num")] # Check that N sums to 12 
+M_cov_count[, tn := paste(trait_num,trait2_num, sep="_")]
+
+# Tidy trait names
+Trait_name_lng <- unique(M_tab_lng[trait_num != trait2_num,.(trait_num,trait2_num,trait, trait2)])
+Trait_name_lng[, tn := paste(trait_num,trait2_num, sep="_")]
+Trait_name_lng[, Name := paste(trait,trait2, sep="-")]
+Trait_name_lng[, x := .I]
+
+# Merge data frames and plot correlation count
+M_cov_count_plot <- merge(M_cov_count[,.(Sign,Sig,N,tn)],Trait_name_lng[,.(tn,Name,x)],all.x = TRUE, by="tn")
+
+M_cov_count_plot <- dcast(M_cov_count_plot[,.(Sig, Sign, Name, N)], Sig+Sign~ Name)
+M_cov_count_plot[is.na(M_cov_count_plot)] <- 0
+M_cov_count_plot[, Sig := fcase(Sig== 0, "NS", default = "Sig")]
+M_cov_count_mat_pos <- as.matrix(M_cov_count_plot[Sign=="pos", 3:17])
+rownames(M_cov_count_mat_pos) <- M_cov_count_plot[Sign=="pos",]$Sig
+M_cov_count_mat_neg <- as.matrix(M_cov_count_plot[Sign=="neg", 3:17])
+rownames(M_cov_count_mat_neg) <- M_cov_count_plot[Sign=="neg",]$Sig
+M_cov_count_mat_neg <- M_cov_count_mat_neg * -1
+#fix
+
+# postscript(paste(".",outdir_fig,"m_cov_count.eps", sep="/"),
+#            family = "Times", pointsize=10, width =6.2, height = 5)
+
+# png(paste(".",outdir_fig,"m_cov_count.png", sep="/"),  units = "in", res=200,
+#     family = "Times New Roman", bg = "white", pointsize=10, width =6.2, height = 5)
+
+par(mfrow=c(1,1), mar=c(4,6,3,1))
+barplot(M_cov_count_mat_pos[,15:1], 
+        col = c("grey", 1),xaxt="n", 
+        border = NA,
+        horiz = T, xlim=c(-12,12),
+        xlab = "Count",
+        las=2, space = 0.15)
+axis(side=1, at = c(seq(-12, 0, 2), seq(2,12,2)),  
+     labels = c(rev(seq(0,12,2)) ,seq(2,12,2)))
+axis(side=2, at= 8.625, labels = "Correlation", 
+     line = 3.75, tick = FALSE)
+barplot(M_cov_count_mat_neg[,15:1], 
+        col = c("grey", 1), horiz = T,
+        border = NA,
+        xaxt="n",
+        las=2, xlim=c(-12,12),
+        space = 0.15, add=T)
+abline(v=0, col="black", lwd = 2.75, lty=2)
+legend("top",inset = c(0, -0.1), fill= c("grey", 1), bty="n", 
+       border = c("grey", 1),
+       pt.cex=5,horiz = TRUE,xpd = TRUE, cex=1.05,
+       legend = c("Not Significant", "Significant"))
+dev.off()
 
 TraceM<-data.frame(NULL)
 for (i in 1:p) {
@@ -360,18 +440,26 @@ colnames(M_VarNeigenVec)[2:4]<-c("VecNum", "Eig", "Var")
 #                       "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/M_traceNeigs.eps", 
 #                     family = "Times", bg="transparent",pointsize=11, width = 7, height = 3.7)
 
-par(mfrow=c(1,2), mar=c(4, 4.5,3, 1.5))
-plot(NULL, ylim=c(0,1.4), xlim=c(0.5,6.5),bty="L",yaxt="n",
-     xlab="Generations", #family = "Times New Roman",
-     ylab=expression("Traces of "~bold(M)~"\u00B1 90% CI"))
-axis(side=2, at=seq(0,1.4,0.2),family = "Times New Roman", labels = sprintf("%.1f",seq(0,1.4,0.2)), las=2)
-M_traces[,segments(x,lo,x,hi)]
-M_traces[,segments(x-0.05,lo,x+0.05,lo)]
-M_traces[,segments(x-0.05,hi,x+0.05,hi)]
-M_traces[, points(x,trace, pch=ifelse(pop<=6, 16,21),
-                        bg=ifelse(pop<=6, "NA","white"))]
-mtext("A", 3,family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
+# par(mfrow=c(1,2), mar=c(4, 4.5,3, 1.5))
+# plot(NULL, ylim=c(0,1.4), xlim=c(0.5,6.5),bty="L",yaxt="n",
+#      xlab="Generations", #family = "Times New Roman",
+#      ylab=expression("Traces of "~bold(M)~"\u00B1 90% CI"))
+# axis(side=2, at=seq(0,1.4,0.2),family = "Times New Roman", labels = sprintf("%.1f",seq(0,1.4,0.2)), las=2)
+# M_traces[,segments(x,lo,x,hi)]
+# M_traces[,segments(x-0.05,lo,x+0.05,lo)]
+# M_traces[,segments(x-0.05,hi,x+0.05,hi)]
+# M_traces[, points(x,trace, pch=ifelse(pop<=6, 16,21),
+#                         bg=ifelse(pop<=6, "NA","white"))]
+# mtext("A", 3,family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
 
+
+# postscript(paste(".",outdir_fig,"m_eigenvalues.eps", sep="/"),
+#            family = "Times", pointsize=14, width =5, height = 4.35)
+
+# png(paste(".",outdir_fig,"m_eigenvalues.png", sep="/"),  units = "in", res=200,
+#     family = "Times New Roman", bg = "white", pointsize=14, width =5, height = 4.35)
+
+par(mfrow=c(1,1), mar=c(4, 4.5,1, 1))
 plot(NULL, xlim=c(0.5,6.5), xlab="",yaxt="n",bty="L",
      ylab="",xaxt="n",yaxs="i", ylim=c(0,100))
 M_VarNeigenVec[,boxplot(Eig~VecNum,col="white", outcex = 0.75, at=seq(0.85,5.85, 1), whisklty = 1,
@@ -382,7 +470,7 @@ axis(side=1,at=3.5, family = "Times New Roman", "Eigenvectors", line=2, tick = F
 axis(side=2,at=50, family = "Times New Roman", "Proportion of among-line variance", line=2, tick = FALSE)
 axis(side=2, family = "Times New Roman",at=seq(0,100, 20),paste0(seq(0,100, 20),"%"), las=2)
 axis(side=1,family = "Times New Roman",at=1:6, as.expression(lapply(1:6, function(i)bquote(italic("e")[.(i)]))))
-mtext("B", 3, family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
+# mtext("B", 3, family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
 # dev.off()
 
 # Section 3. Residual Varaince (not included in MS) -----------------
@@ -448,7 +536,11 @@ R_tab<-data.frame(NULL)
 for (mat in 1:p) {
   for (j in 1:nrow(comb)) {
     resid<-sprintf("%.3f",R_list[[mat]][comb[j,1],comb[j,2]])
+    if (comb[j,1] != comb[j,2]){
+    resid_ci<-paste(sprintf("%.3f",rangeFunc95(AsycovR_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+    } else {
     resid_ci<-paste(sprintf("%.3f",rangeFunc90(AsycovR_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+    }
     R_tab<-rbind(R_tab,cbind(names(R_list)[[mat]],comb[j,1],comb[j,2], resid,resid_ci))
   }
 }
@@ -458,9 +550,9 @@ R_tab<-melt(R_tab[,-1],id.var=c("Treat", "Gen", "V2", "V3"), measure.vars = c("r
 dcast(R_tab, Gen+variable+V3~Treat+V2, value.var=c("value"))->R_tab
 setorderv(R_tab, c("Gen", "V3"), c(1,1))
 R_tab[is.na(R_tab)]<-""
-# write.table(R_tab, file ="C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Tables/R_tab_CI.txt",
-#           row.names = FALSE, quote=TRUE, sep="\t")
 
+# write.table(R_tab, file =paste(".",outdir_tab,"R_tab_CI.txt", sep="/"),
+#           row.names = FALSE, quote = TRUE, sep="\t")
 
 # Get CIs for Eigenvectors
 EigenRCI_array<-array(0, dim=c(1, n, MVNsample, p))
@@ -1100,61 +1192,29 @@ Project_major_EigtenVecs[, x:=fcase(Treat=="1", as.numeric(Gen)-0.15,
 dcast(Project_major_EigtenVecs[,.(Treat, Gen, Parm, vec, var)],
       vec+Treat+Gen~Parm, value.var="var")->Project_major_EigtenVecs_w
 
-# OLD plots
 
-par(mar=c(4.5,6,3.5,1)); t=2
-for (p in c("M", "R")) {
-  for (evec in c(11,16)) {
-    if (p=="M"){
-      plot(NULL, xlim=c(0.5, 6.5),bty="L",yaxt="n",xlab="Generations",
-           ylim=c(-0.05, 1), main="",
-           family = "Times New Roman",
-           ylab="Among-line varaince \u00B1 90% CI")
-      axis(side=2, at=seq(0,1,0.2),family = "Times New Roman", labels = sprintf("%.2f",seq(0,1,0.2)), las=2)
-      abline(h=0, lty=2)
-      mtext(bquote(italic("e")[.(evec)]),3, adj=0.03, line = 0,family = "Times New Roman")
-    } else{
-      plot(NULL, xlim=c(0.5, 6.5),bty="L",yaxt="n",xlab="Generations",
-           ylim=c(0.5, 2), main="",
-           family = "Times New Roman",
-           ylab="Residual variance \u00B1 90% CI")
-      axis(side=2, at=seq(0.6,2,0.2),family = "Times New Roman", labels = sprintf("%.2f",seq(0.6,2,0.2)), las=2)
-      mtext(bquote(italic("e")[.(evec)]),3, adj=0.03, line = 0,family = "Times New Roman")
-    } 
-    Project_major_EigtenVecs[Parm==p & vec == evec,segments(x,loCI,x, upCI), by=.I]
-    Project_major_EigtenVecs[Parm==p & vec == evec,segments(x-0.05,loCI,x+0.05, loCI), by=.I]
-    Project_major_EigtenVecs[Parm==p & vec == evec,segments(x-0.05,upCI,x+0.05, upCI), by=.I]
-    Project_major_EigtenVecs[Parm==p & vec == evec,
-                             points(x,var, pch=21, bg=ifelse(Treat=="1","black", "white")), by=.I]
-    mtext(LETTERS[t], 3, outer=FALSE, cex=1.25, adj=-0.21,family = "Times New Roman", line=1.55);t=t+1
-  }
+# cairo_ps(paste(".",outdir_fig,"Eigenten_eigvec_proj.eps", sep="/"),
+#            family = "Times", pointsize=11, width =6, height = 4.35)
+
+# png(paste(".",outdir_fig,"Eigenten_eigvec_proj.png", sep="/"),  units = "in", res=200,
+#     family = "Times New Roman", bg = "white", pointsize=11, width =6, height = 4.35)
+
+par(mfrow = c(2,3), mar=c(4.5,5,3.5,1)); t=1
+for (evec in c(11,16,21,31,36)) {
+  plot(NULL, xlim=c(0.5, 6.5),bty="L",yaxt="n",xlab="Generations",
+       ylim=c(-0.05, 1), main="",
+       family = "Times New Roman",
+       ylab="Among-line varaince \u00B1 90% CI")
+  axis(side=2, at=seq(0,1,0.2),family = "Times New Roman", labels = sprintf("%.2f",seq(0,1,0.2)), las=2)
+  abline(h=0, lty=2)
+  mtext(bquote(italic("e")[.(evec)]),3, adj=0.03, line = 0,family = "Times New Roman")
+  Project_major_EigtenVecs[Parm == "M" & vec == evec,segments(x,loCI,x, upCI)]
+  Project_major_EigtenVecs[Parm == "M" & vec == evec,segments(x-0.075,loCI,x+0.075, loCI)]
+  Project_major_EigtenVecs[Parm == "M" & vec == evec,segments(x-0.075,upCI,x+0.075, upCI)]
+  Project_major_EigtenVecs[Parm == "M" & vec == evec,
+                           points(x,var, pch=21, bg=ifelse(Treat=="1","black", "white"))]
+  mtext(LETTERS[t], 3, outer=FALSE, cex=1.25, adj=-0.21,family = "Times New Roman", line=1.55);t=t+1
 }
-Project_major_EigtenVecs_w[vec==11] %T>% 
-  with(plot(R,M, bty="L", xlim=c(0.8, 1.8),ylim=c(0,0.5), yaxt="n",
-            xlab="Residual variance", ylab="Among-line variance",
-            pch=ifelse(Treat==1, 16,21),family = "Times New Roman")) %>% 
-  with(text(R,M,Gen,pos=2,cex=0.95, family = "Times New Roman"))
-axis(side=2, at=seq(0,0.5, 0.1),family = "Times New Roman", 
-     labels = sprintf("%1.1f",seq(0,0.5, 0.1)), las=2)
-mtext(bquote(italic("e")[.(11)]),3, line = 0.95,family = "Times New Roman")
-tempCorvals<-Project_major_EigtenVecs_w[vec==11, cor.test(R,M, method="pearson")][c(4,3)]
-mtext(bquote("(Pearson's "~italic(r)~"="~.(sprintf("%1.2f",tempCorvals$estimate))~
-               ","~italic(P)~"="~.(sprintf("%1.2f",tempCorvals$p.value))~" )"),
-      line=-0.1, family = "Times New Roman", cex=0.65)
-mtext(LETTERS[6], 3, outer=FALSE, cex=1.25, adj=-0.21,family = "Times New Roman", line=1.55)
-Project_major_EigtenVecs_w[vec==16] %T>% 
-  with(plot(R,M, bty="L", xlim=c(0.7, 1.4),ylim=c(0,0.5),yaxt="n",
-            xlab="Residual variance", ylab="Among-line variance",
-            pch=ifelse(Treat==1, 16,21),family = "Times New Roman")) %>% 
-  with(text(R,M,Gen,pos=2,cex=0.95, family = "Times New Roman"))
-mtext(bquote(italic("e")[.(16)]),3, line = 0.95,family = "Times New Roman")
-axis(side=2, at=seq(0,0.5, 0.1),family = "Times New Roman", 
-     labels = sprintf("%1.1f",seq(0,0.5, 0.1)), las=2)
-tempCorvals<-Project_major_EigtenVecs_w[vec==11, cor.test(R, M, method="spearman")][c(4,3)]
-mtext(bquote("(Spearman's "~rho~"="~.(sprintf("%1.2f",tempCorvals$estimate))~
-               ","~italic(P)~"="~.(sprintf("%1.2f",tempCorvals$p.value))~" )"),
-      line=-0.1, family = "Times New Roman", cex=0.65)
-mtext(LETTERS[7], 3, outer=FALSE, cex=1.25, adj=-0.21,family = "Times New Roman", line=1.55)
 # dev.off()
 
 # svglite(filename = "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/MajorEigentensorEigVecs.svg",

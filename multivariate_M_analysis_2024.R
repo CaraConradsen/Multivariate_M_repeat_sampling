@@ -281,8 +281,8 @@ M_tab_lng[, Sig:= fcase(ci_lo < 0 & ci_up < 0 & vl < 0, 1,
 
 # write.csv(M_tab_lng, file =paste(".",outdir_tab,"M_tab_lng_sig.csv", sep="/"),
 #           row.names = FALSE)
-# Now to count the significant covariances
-M_cov_count <- M_tab_lng[trait_num != trait2_num]
+# Now to count the significant covariances and variances
+M_cov_count <- M_tab_lng
 M_cov_count[, Sign:= fcase(vl >= 0, "pos",
                            default = "neg") ]
 M_cov_count <- M_cov_count[, .(N = .N), by=c("trait_num","trait2_num", "Sign", "Sig")]
@@ -290,53 +290,97 @@ M_cov_count[,.(N = sum(N)), by=c("trait_num","trait2_num")] # Check that N sums 
 M_cov_count[, tn := paste(trait_num,trait2_num, sep="_")]
 
 # Tidy trait names
-Trait_name_lng <- unique(M_tab_lng[trait_num != trait2_num,.(trait_num,trait2_num,trait, trait2)])
+Trait_name_lng <- unique(M_tab_lng[,.(trait_num,trait2_num,trait, trait2)])
+Trait_name_lng[, cov:=fcase(trait_num == trait2_num, "var", default = "cov")]
 Trait_name_lng[, tn := paste(trait_num,trait2_num, sep="_")]
-Trait_name_lng[, Name := paste(trait,trait2, sep="-")]
+Trait_name_lng[, Name := paste(trait,trait2, sep=" - ")]
+Trait_name_lng[cov == "var", Name := trait]
+setorderv(Trait_name_lng, c("cov","trait_num", "trait2_num"), c(-1,-1,-1))
 Trait_name_lng[, x := .I]
 
 # Merge data frames and plot correlation count
-M_cov_count_plot <- merge(M_cov_count[,.(Sign,Sig,N,tn)],Trait_name_lng[,.(tn,Name,x)],all.x = TRUE, by="tn")
+M_cov_count_plot <- merge(M_cov_count[,.(Sign,Sig,N,tn)],Trait_name_lng[,.(tn,Name,x, cov)],all.x = TRUE, by="tn")
+M_cov_count_plot$Name = factor(M_cov_count_plot$Name, 
+                               levels = c("3.7","2.8 - 3.7","2.8","2.5 - 3.7","2.5 - 2.8",
+                                          "2.5","1.5 - 3.7","1.5 - 2.8","1.5 - 2.5","1.5",
+                                          "1.2 - 3.7", "1.2 - 2.8", "1.2 - 2.5", "1.2 - 1.5", 
+                                          "1.2","CS - 3.7","CS - 2.8","CS - 2.5","CS - 1.5",
+                                          "CS - 1.2", "CS"))
+m_cov_list <- list(); t=1
+for (i in c("cov","var")) {
+  M_cov_dat <- dcast(M_cov_count_plot[cov==i,.(Sig, Sign, Name, N)], 
+                     Sig+Sign~ Name, value.var = "N")
+  M_cov_dat[is.na(M_cov_dat)] <- 0
+  
+  # Get positive values first
+  M_cov_dat[, Sig := fcase(Sig== 0, "NS", default = "Sig")]
+  M_cov_dat_pos <- as.matrix(M_cov_dat[Sign=="pos",-c(1,2)])
+  rownames(M_cov_dat_pos) <- M_cov_dat[Sign=="pos",]$Sig
+  m_cov_list[[t]] <- M_cov_dat_pos; t = t + 1
+  
+  if(i=="cov"){
+  # then negative values (varainces will be empty)
+  M_cov_dat_neg <- as.matrix(M_cov_dat[Sign=="neg",-c(1,2)])
+  rownames(M_cov_dat_neg) <- M_cov_dat[Sign=="neg"]$Sig
+  M_cov_dat_neg <- M_cov_dat_neg * -1
+  m_cov_list[[t]] <- M_cov_dat_neg; t = t + 1
+  } else {
+    break
+  }
+}
 
-M_cov_count_plot <- dcast(M_cov_count_plot[,.(Sig, Sign, Name, N)], Sig+Sign~ Name)
-M_cov_count_plot[is.na(M_cov_count_plot)] <- 0
-M_cov_count_plot[, Sig := fcase(Sig== 0, "NS", default = "Sig")]
-M_cov_count_mat_pos <- as.matrix(M_cov_count_plot[Sign=="pos", 3:17])
-rownames(M_cov_count_mat_pos) <- M_cov_count_plot[Sign=="pos",]$Sig
-M_cov_count_mat_neg <- as.matrix(M_cov_count_plot[Sign=="neg", 3:17])
-rownames(M_cov_count_mat_neg) <- M_cov_count_plot[Sign=="neg",]$Sig
-M_cov_count_mat_neg <- M_cov_count_mat_neg * -1
 #fix
 
 # postscript(paste(".",outdir_fig,"m_cov_count.eps", sep="/"),
-#            family = "Times", pointsize=10, width =6.2, height = 5)
+#            family = "Times", pointsize=12, width =6.2, height = 7.5)
 
 # png(paste(".",outdir_fig,"m_cov_count.png", sep="/"),  units = "in", res=200,
-#     family = "Times New Roman", bg = "white", pointsize=10, width =6.2, height = 5)
+#     family = "Times New Roman", bg = "white", pointsize=12, width =6.2, height = 7.5)
 
-par(mfrow=c(1,1), mar=c(4,6,3,1))
-barplot(M_cov_count_mat_pos[,15:1], 
+# Variance on the top and covariance at the bottom
+layout(mat = matrix(c(0,2,1,2,1,2,0,2), 
+                    nrow = 2, ncol = 4),
+       heights = c(1, 2))
+# layout.show(2)
+
+# Variances first
+par(mar=c(4,6,4,1))
+barplot(m_cov_list[[3]], 
+        col = c("grey", 1),xaxt="n", 
+        border = NA,
+        horiz = T, xlim=c(0,12),
+        xlab = "Count",
+        las=2, space = 0.15)
+axis(side=2, at= 3.45, labels = "Variance", 
+     line = 2.75, tick = FALSE)
+axis(side=1, at = seq(0,12,2),  
+     labels = seq(0,12,2))
+legend("top",inset = c(0, -0.15), fill= c("grey", 1), bty="n", 
+       border = c("grey", 1),
+       pt.cex=5,horiz = TRUE,xpd = TRUE, cex=1.05,
+       legend = c("Not Significant", "Significant"))
+mtext("(a)", 3,outer=FALSE, cex=1.25,adj=-0.21, line=1)
+
+par(mar=c(4,6,3,1))
+barplot(m_cov_list[[1]], 
         col = c("grey", 1),xaxt="n", 
         border = NA,
         horiz = T, xlim=c(-12,12),
         xlab = "Count",
         las=2, space = 0.15)
-axis(side=1, at = c(seq(-12, 0, 2), seq(2,12,2)),  
-     labels = c(rev(seq(0,12,2)) ,seq(2,12,2)))
-axis(side=2, at= 8.625, labels = "Correlation", 
+axis(side=1, at = seq(-12, 12, 2),  
+     labels = seq(-12, 12, 2))
+axis(side=2, at= 8.625, labels = "Covariance", 
      line = 3.75, tick = FALSE)
-barplot(M_cov_count_mat_neg[,15:1], 
+barplot(m_cov_list[[2]], 
         col = c("grey", 1), horiz = T,
         border = NA,
         xaxt="n",
         las=2, xlim=c(-12,12),
         space = 0.15, add=T)
 abline(v=0, col="black", lwd = 2.75, lty=2)
-legend("top",inset = c(0, -0.1), fill= c("grey", 1), bty="n", 
-       border = c("grey", 1),
-       pt.cex=5,horiz = TRUE,xpd = TRUE, cex=1.05,
-       legend = c("Not Significant", "Significant"))
-dev.off()
+mtext("(b)", 3,cex=1.25, adj = -0.11)
+# dev.off()
 
 TraceM<-data.frame(NULL)
 for (i in 1:p) {
@@ -466,11 +510,10 @@ M_VarNeigenVec[,boxplot(Eig~VecNum,col="white", outcex = 0.75, at=seq(0.85,5.85,
                         yaxt="n",pch=4,xaxt="n",frame=F,boxwex=0.2, add = TRUE)]
 M_VarNeigenVec[,boxplot(Var~VecNum,col="darkgrey", outcex = 0.75, at=seq(1.15,6.15, 1), whisklty = 1,
                         yaxt="n",pch=4,xaxt="n",frame=F,boxwex=0.2, add = TRUE)]
-axis(side=1,at=3.5, family = "Times New Roman", "Eigenvectors", line=2, tick = FALSE)
-axis(side=2,at=50, family = "Times New Roman", "Proportion of among-line variance", line=2, tick = FALSE)
-axis(side=2, family = "Times New Roman",at=seq(0,100, 20),paste0(seq(0,100, 20),"%"), las=2)
-axis(side=1,family = "Times New Roman",at=1:6, as.expression(lapply(1:6, function(i)bquote(italic("e")[.(i)]))))
-# mtext("B", 3, family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
+axis(side=1,at=3.5, "Ordered eigenvalue or trait", line=2, tick = FALSE)
+axis(side=2,at=50, "Proportion of among-line variance", line=2, tick = FALSE)
+axis(side=2, at=seq(0,100, 20),paste0(seq(0,100, 20),"%"), las=2)
+axis(side=1, at=1:6, as.expression(lapply(paste0(1:6,c("st","nd","rd","th","th","th")), function(i)bquote(italic(.(i))))))
 # dev.off()
 
 # Section 3. Residual Varaince (not included in MS) -----------------
@@ -838,12 +881,7 @@ for(j in c(1:3)){#number of eigenvecotrs of H
 }
 
 
-# setEPS()
-# postscript(paste(".",outdir_fig,"HvecsThruM.eps", sep="/"),
-#            family = "Times", pointsize=14, width =10, height = 4.35)
-# 
-# png(paste(".",outdir_fig,"HvecsThruM.png", sep="/"),  units = "in", res=200,
-#     family = "Times New Roman", bg = "white", pointsize=14, width =10, height = 4.35)
+
 
 as.data.frame(cbind(rep(1:12, 6), c(rep("M", 36),rep("R", 36)),
       rep(rep(1:3,each=6),2),rep(c(seq(1.25,11.25,2), seq(1.75,11.75,2)),6)))->H_thru_MnR
@@ -866,77 +904,47 @@ for(j in c(1:3)){#number of eigenvecotrs of H
 H_thru_MnR[,pchy:=fcase(p %in% 1:6, 16,
                         default= 21)]
 
-# par(mfrow=c(3,3),mar = c(4, 5, 4, 0.5))
-par(mfrow=c(1,3),mar = c(4, 5, 4, 0.5))
-for (prm in c("M")) {#, "R"
-  for(j in c(1:3)){
-    if (prm=="M"){
-      plot(NULL, xlim=c(0.5,12.5), ylim=c(-0.1, 0.75), bty="L",xaxt="n",
-           ylab=ifelse(j==1, "Among-line variance \u00B1 90% CI", ""),
-           xlab="Generations", yaxt="n", family = "Times New Roman", 
-           main=bquote(bolditalic("h")[.(j)]))
-      abline(h=0, lty=2)
-      axis(side=1, at=seq(1.5,11.5,2), labels = 1:6, family = "Times New Roman")
-      axis(side=2, at=seq(-0.1,0.7,0.1), labels = seq(-0.1,0.7,0.1), las=2, family = "Times New Roman")
-      mtext(LETTERS[j], side=3, adj=-0.2, line=1.3,cex=1.2, family = "Times New Roman")
-    }else{
-      plot(NULL, xlim=c(0.5,12.5), ylim=c(0.4, 1.8), bty="L",xaxt="n",
-           ylab=ifelse(j==1, "Residual variance \u00B1 90% CI", ""),
-           xlab="Generations", yaxt="n", family = "Times New Roman", 
-           main=bquote(bolditalic("h")[.(j)]))
-      axis(side=1, at=seq(1.5,11.5,2), labels = 1:6, family = "Times New Roman")
-      axis(side=2, at=seq(0.4,1.8,0.2), labels = sprintf("%1.1f",seq(0.4,1.8,0.2)), las=2, family = "Times New Roman")
-      mtext(LETTERS[j+3], side=3, adj=-0.2, line=1.3,cex=1.2, family = "Times New Roman")
-    }
-    for(i in 1:p){
-    H_thru_MnR[Hvec==j & parm==prm & p==i] %T>%
-        with(segments(x,Lo,x, Hi)) %T>% 
-        with(points(x,var, pch=pchy, bg=ifelse(pchy==21, "white", NA))) %T>% 
-        with(segments((x-0.1), Lo,(x+0.1), Lo)) %>% 
-        with(segments((x-0.1), Hi,(x+0.1), Hi))
-    }
+# postscript(paste(".",outdir_fig,"HvecsThruM.eps", sep="/"),
+#            family = "Times", pointsize=12, width =10, height = 4.35)
+
+# png(paste(".",outdir_fig,"HvecsThruM.png", sep="/"),  units = "in", res=200,
+#     family = "Times New Roman", bg = "white", pointsize=14, width = 6.25, height = 2.5)
+
+layout(mat = matrix(c(1,2,3), 
+                    nrow = 1, ncol = 3),
+       widths = c(1.05, 1,1))
+
+for(j in c(1:3)){
+  if (j==1){
+    par(mar = c(4, 4, 3.5, 0))
+  } else{
+    par(mar = c(4, 3, 3.5, 0))
   }
+  plot(NULL, xlim=c(0.5,12.5), ylim=c(-0.1, 0.75), bty="L",xaxt="n",
+       ylab=ifelse(j==1, "Among-line variance \u00B1 90% CI", ""),
+       xlab="Generations", yaxt="n", main=bquote(bolditalic("h")[.(j)]))
+  abline(h=0, lty=2)
+  axis(side=1, at=seq(1.5,11.5,2), labels = 1:6)
+  axis(side=2, at=seq(-0.1,0.7,0.1), 
+       labels = sprintf("%.1f", seq(-0.1,0.7,0.1)), las=2)
+  mtext(paste0("(",letters[j], ")"), side=3, adj=-0.3, line=1.5,cex=1.2)
+  for(i in 1:p){
+    H_thru_MnR[Hvec==j & parm==prm & p==i] %T>%
+      with(segments(x,Lo,x, Hi)) %T>% 
+      with(points(x,var, pch=pchy, bg=ifelse(pchy==21, "white", NA))) %T>% 
+      with(segments((x-0.2), Lo,(x+0.2), Lo)) %>% 
+      with(segments((x-0.2), Hi,(x+0.2), Hi))
+  }
+  if (j!=3){
+    next
+  } else {
+    legend("topright", pch =c(16, 21), col = c(1,1),
+           bg =c(1,0),
+           legend= c("Small", "Large"), bty="n")
+  }
+    
 }
 # dev.off()
-# H_thru_MnR_w<- H_thru_MnR
-# H_thru_MnR_w[, c("Treat","Gen") := data.table(str_split_fixed(pop,"_",2))]
-# H_thru_MnR_w[,c("x", "pop", "Treat"):= NULL]
-# H_thru_MnR_w[,Gen:=as.numeric(Gen)]
-# dcast(H_thru_MnR_w, p+Gen+Hvec+pchy~parm, value.var = c("var","Lo","Hi"))->H_thru_MnR_w
-# #Spearman's or Pearsons?
-# # for(j in c(1:3)){
-# #   cat(paste0("Hvec ",j, "\n"))
-# #   cat(ifelse(shapiro.test(H_thru_MnR_w[Hvec==j]$var_M)$p.value > 0.05, "M normal", "M not normal"), "\n")
-# #   cat(ifelse(shapiro.test(H_thru_MnR_w[Hvec==j]$var_R)$p.value > 0.05, "R normal", "R not normal"), "\n")
-# #   cat("____\n\n")
-# # }
-# for (j in c(1:3)) {
-#   plot(NULL, xlim=c(0.6,1.5), ylim=c(0, 0.5), bty="L",xaxt="n",
-#        ylab=ifelse(j==1, "Among-line variance", ""),
-#        xlab="Residual variance", yaxt="n", family = "Times New Roman", 
-#        main=bquote(bolditalic("h")[.(j)]))
-#   axis(side=1, at=seq(0.6,1.5,0.2), family = "Times New Roman", labels = sprintf("%1.1f",seq(0.6,1.5,0.2)))
-#   axis(side=2, at=seq(0,0.5,0.1), family = "Times New Roman", labels = seq(0,0.5,0.1), las=2)
-#   mtext(LETTERS[j+6], side=3, adj=-0.2, line=1.3,cex=1.2, family = "Times New Roman")
-#   for(i in 1:p){
-#     H_thru_MnR_w[Hvec==j & p==i] %T>% 
-#       with(points(var_R,var_M, pch=pchy, bg=ifelse(pchy==21, "white", NA))) %>% 
-#       with(text(var_R,var_M,Gen,pos=2,cex=0.95, family = "Times New Roman"))
-#   }
-#   if (j!=4){#3
-#   tempCorvals<-H_thru_MnR_w[Hvec==j, cor.test(var_M,var_R, method="pearson")][c(4,3)]
-#   mtext(bquote("(Pearson's "~italic(r)~"="~.(sprintf("%1.2f",tempCorvals$estimate))~
-#                  ","~italic(P)~"="~.(sprintf("%1.2f",tempCorvals$p.value))~" )"),
-#         line=-0.1, family = "Times New Roman", cex=0.65)
-#   }else{
-#       tempCorvals<-H_thru_MnR_w[Hvec==j, cor.test(var_M,var_R, method="spearman")][c(4,3)]
-#   mtext(bquote("(Spearman's "~italic(rho)~"="~.(sprintf("%1.2f",tempCorvals$estimate))~
-#                  ","~italic(P)~"="~.(sprintf("%1.2f",tempCorvals$p.value))~" )"),
-#         line=-0.1, family = "Times New Roman", cex=0.65)
-#   }
-       
-# }
- # dev.off()
 
 
 # Section 5. Eigentensor Analysis --------------------------
@@ -1101,8 +1109,8 @@ null_S_CI$model <- "Null"
 # Plot the 90% CIs for eigtensors and the NULL-----------------------------------------
 #Add REML-MVN CI
 EigtenCIs<-as.data.frame(NULL)
-for (p in 1:neigten){
-  EigtenCIs<-rbind(EigtenCIs, c(p, rangeFunc90(MVN_S_val[,p])))
+for (i in 1:neigten){
+  EigtenCIs<-rbind(EigtenCIs, c(i, rangeFunc90(MVN_S_val[,i])))
 }
 colnames(EigtenCIs)<-c("Eigten_Num", "n", "lowCI", "upCI")
 EigtenCIs %<>% mutate(Eigten=paste0("E", EigtenCIs$Eigten_Num))

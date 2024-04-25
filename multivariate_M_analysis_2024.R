@@ -6,21 +6,17 @@ library(stringi); library(stringr); library(magrittr); library(evolqg); library(
 library(foreach); library(matrixStats); library(MASS); library(parallel); library(matrixcalc)
 library(gdata); library(bigstatsr); library(abind); library(psych); library(stats)
 
+# # font for eps figure outputs
+# library(sysfonts); library(showtextdb); library(showtext)
+# ## Load Times New Roman fonts on Windows
+# font_add("times", regular = "times.ttf", bold = "timesbd.ttf", italic = "timesi.ttf", bolditalic ="timesbi.ttf")
 
-# library(devEMF)
-# library(tidyr); library(Rcpp)
-# library(RColorBrewer); library(plotrix) 
-# library(gridExtra);library(grid);library(xtable);library(errors);;library(lmtest)
-# ;library(viridis)#Rank-based fitting of linear models
-# library(corpcor); library(svglite)
-# fonts <- list(`Times New Roman` = "DejaVu Serif")
+library(showtext)
+## add the Arial font
+font_add("Arial", regular = "arial.ttf",
+         bold = "arialbd.ttf", italic = "ariali.ttf", bolditalic = "arialbi.ttf")
 
-# figure outputs
-library(sysfonts); library(showtextdb); library(showtext)
-## Load Times New Roman fonts on Windows
-font_add("times", regular = "times.ttf", bold = "timesbd.ttf", italic = "timesi.ttf", bolditalic ="timesbi.ttf")
-
-# for png
+# font for png
 library(extrafont)
 loadfonts(device = "win")
 
@@ -123,17 +119,17 @@ theta_list <- sapply(Mfilenames, function (x)
   fread(paste(un_cov_dir, x, sep = "/"))[Subject == "Line",.(Estimate)])
 names(theta_list) <- gsub(".csv", "", gsub("Covparms", "", Mfilenames))  
 
-theta_array <- array(NA, dim=c((n*(n+1)/2), 1, p))
+theta_array <- array(NA, dim = c((n*(n+1)/2), 1, p))
 for (i in c(1:p)){theta_array[,,i] <- theta_list[[i]]}
 dimnames(theta_array)[[3]] <- names(theta_list)
 
 # Create array for 10,000 REML-MVN data
-AsycovM_array<-array(NA, dim=c(n, n, MVNsample, p)) 
+AsycovM_array <- array(NA, dim = c(n, n, MVNsample, p)) 
 
 # The loop for REML-MVN 
 set.seed(42)
 for (i in c(1:p)){ 
-  reps <- mvrnorm(n=MVNsample, theta_array[,,i], V_array[,,i])
+  reps <- mvrnorm(n = MVNsample, theta_array[,,i], V_array[,,i])
   for (j in c(1:MVNsample)){
     M <- matrix(NA, nrow = n, ncol = n)
     lowerTriangle(M, diag = TRUE, byrow = TRUE) <- reps[j,]
@@ -149,8 +145,8 @@ null_Mfilenames <- list.files(path = rando_un_cov_dir, pattern = "covpars", full
 # create a function that takes in the covaraince estimates and outputs a matrix
 vec_est_2mat <- function(x){
   x <- c(x)
-  m <- matrix(NA, nrow=n, ncol=n)
-  lowerTriangle(m, diag=TRUE, byrow = TRUE) <- x
+  m <- matrix(NA, nrow = n, ncol = n)
+  lowerTriangle(m, diag = TRUE, byrow = TRUE) <- x
   upperTriangle(m) = lowerTriangle(m, byrow = TRUE)
   return(m)
 }
@@ -226,7 +222,7 @@ rangeFunc95 <- function(x){
 }
 
 
-# Section 2. M matrices eigenanalyses ------------------------------------------------------
+# Section 2. M matrices eigenanalyses and CV investigation ------------------------------------------------------
 # Output the M matrices and eigenanalyses tables with 90% CI for supplementary
 # Create a figure contrasting M matrices across the 12 populations against univariaste estimates
 
@@ -234,31 +230,31 @@ rangeFunc95 <- function(x){
 comb <- data.frame(NULL)
 l = 0; e = c(1:n)
 while (l < 6) {
-  comb <- rbind(comb, cbind(rep((l+1),(n-l)), e[(l+1):n]))
+  comb <- rbind(comb, cbind(rep((l+1), (n-l)), e[(l+1):n]))
   l = l + 1
 } 
 
 # Calculated the CI for each element in M using the 10,000 REML-MVN AsycovM_array
 # Want 90% for variances, and 95% covariances 
-M_tab<-data.frame(NULL)
+M_tab <- data.frame(NULL)
 for (mat in 1:p) {
   for (j in 1:nrow(comb)) {
     vl<-sprintf("%.3f",M_list[[mat]][comb[j,1],comb[j,2]])
     if (comb[j,1] != comb[j,2]){
-      vl_ci<-paste(sprintf("%.3f",rangeFunc95(AsycovM_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+      vl_ci <- paste(sprintf("%.3f",rangeFunc95(AsycovM_array[comb[j,1], comb[j,2],,mat])[2:3]), collapse="; ")
     } else {
-      vl_ci<-paste(sprintf("%.3f",rangeFunc90(AsycovM_array[comb[j,1],comb[j,2],,mat])[2:3]), collapse="; ")
+      vl_ci <- paste(sprintf("%.3f",rangeFunc90(AsycovM_array[comb[j,1], comb[j,2],,mat])[2:3]), collapse="; ")
     }
-    M_tab<-rbind(M_tab,cbind(names(M_list)[[mat]],comb[j,1],comb[j,2], vl,vl_ci))
+    M_tab <- rbind(M_tab, cbind(names(M_list)[[mat]], comb[j,1], comb[j,2], vl,vl_ci))
   }
 }
 setDT(M_tab)
 M_tab_lng <- M_tab # for stacked barchart
 M_tab[, c("Treat","Gen") := data.table(str_split_fixed(V1,"_",2))]
-M_tab <- melt(M_tab[,-1],id.var=c("Treat", "Gen", "V2", "V3"), measure.vars = c("vl","vl_ci") )
-dcast(M_tab, Gen+variable+V3~Treat+V2, value.var=c("value"))->M_tab
+M_tab <- melt(M_tab[,-1], id.var = c("Treat", "Gen", "V2", "V3"), measure.vars = c("vl","vl_ci") )
+M_tab <- dcast(M_tab, Gen + variable + V3 ~ Treat + V2, value.var = c("value"))
 setorderv(M_tab, c("Gen", "V3"), c(1,1))
-M_tab[is.na(M_tab)]<-""
+M_tab[is.na(M_tab)] <- ""
 
 # write.table(M_tab, file =paste(".",outdir_tab,"M_tab_CI.txt", sep="/"),
 #           row.names = FALSE, quote = TRUE, sep="\t")
@@ -329,22 +325,23 @@ for (i in c("cov","var")) {
   }
 }
 
-#fix
-
 # postscript(paste(".",outdir_fig,"m_cov_count.eps", sep="/"),
-#            family = "Times", pointsize=12, width =6.2, height = 7.5)
+#            horizontal = FALSE, onefile = FALSE, paper = "special",
+#            family = "ArialMT", pointsize = 16.95, width = 6.511811, height = 7.161417)
+# # To convert, use png mm width converted into inches / 10; use "Times" for Times New Roman
 
-# png(paste(".",outdir_fig,"m_cov_count.png", sep="/"),  units = "in", res=200,
-#     family = "Times New Roman", bg = "white", pointsize=12, width =6.2, height = 7.5)
+# png(paste(".",outdir_fig,"m_cov_count.png", sep="/"),  res = 300,
+#     family = "Arial", bg = "white", pointsize = 14, width = 1654, height = 1819)
 
 # Variance on the top and covariance at the bottom
 layout(mat = matrix(c(0,2,1,2,1,2,0,2), 
                     nrow = 2, ncol = 4),
-       heights = c(1, 2))
+       heights = c(0.333, 0.666))
 # layout.show(2)
 
+
 # Variances first
-par(mar=c(4,6,4,1))
+par(mar=c(4,6,2,1))
 barplot(m_cov_list[[3]], 
         col = c("grey", 1),xaxt="n", 
         border = NA,
@@ -352,16 +349,16 @@ barplot(m_cov_list[[3]],
         xlab = "Count",
         las=2, space = 0.15)
 axis(side=2, at= 3.45, labels = "Variance", 
-     line = 2.75, tick = FALSE)
+     line = 2, tick = FALSE)
 axis(side=1, at = seq(0,12,2),  
      labels = seq(0,12,2))
-legend("top",inset = c(0, -0.15), fill= c("grey", 1), bty="n", 
+legend("top",inset = c(0, -0.34), fill= c("grey", 1), bty="n", 
        border = c("grey", 1),
        pt.cex=5,horiz = TRUE,xpd = TRUE, cex=1.05,
        legend = c("Not Significant", "Significant"))
-mtext("(a)", 3,outer=FALSE, cex=1.25,adj=-0.21, line=1)
+mtext("(a)", 3,outer=FALSE, cex = 1, adj = -0.45, line=1)
 
-par(mar=c(4,6,3,1))
+par(mar=c(4,6,2,1))
 barplot(m_cov_list[[1]], 
         col = c("grey", 1),xaxt="n", 
         border = NA,
@@ -378,9 +375,11 @@ barplot(m_cov_list[[2]],
         xaxt="n",
         las=2, xlim=c(-12,12),
         space = 0.15, add=T)
-abline(v=0, col="black", lwd = 2.75, lty=2)
-mtext("(b)", 3,cex=1.25, adj = -0.11)
+abline(v=0, col="black", lwd = 2.65, lty=2)
+mtext("(b)", 3,cex = 1, adj = -0.21)
 # dev.off()
+
+
 
 TraceM<-data.frame(NULL)
 for (i in 1:p) {
@@ -475,33 +474,13 @@ M_VarNeigenVec<-merge(M_VarNeigenVec, M_Var, by="pop")
 setDT(M_VarNeigenVec)
 M_VarNeigenVec<-melt(M_VarNeigenVec, id="pop", measure=patterns("e", "Var"))
 colnames(M_VarNeigenVec)[2:4]<-c("VecNum", "Eig", "Var")
-#plot
-# svglite(filename = "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/M_traceNeigs.svg",
-#     width = 7, height = 3.7, pointsize = 11,
-#     bg = "white", system_fonts = "Times New Roman")
-
-# grDevices::cairo_ps(filename =
-#                       "C:/Users/carac/Dropbox/Analysis/Multivariate_MR/Multi_Latex_Documents/PNGs and EPS/M_traceNeigs.eps", 
-#                     family = "Times", bg="transparent",pointsize=11, width = 7, height = 3.7)
-
-# par(mfrow=c(1,2), mar=c(4, 4.5,3, 1.5))
-# plot(NULL, ylim=c(0,1.4), xlim=c(0.5,6.5),bty="L",yaxt="n",
-#      xlab="Generations", #family = "Times New Roman",
-#      ylab=expression("Traces of "~bold(M)~"\u00B1 90% CI"))
-# axis(side=2, at=seq(0,1.4,0.2),family = "Times New Roman", labels = sprintf("%.1f",seq(0,1.4,0.2)), las=2)
-# M_traces[,segments(x,lo,x,hi)]
-# M_traces[,segments(x-0.05,lo,x+0.05,lo)]
-# M_traces[,segments(x-0.05,hi,x+0.05,hi)]
-# M_traces[, points(x,trace, pch=ifelse(pop<=6, 16,21),
-#                         bg=ifelse(pop<=6, "NA","white"))]
-# mtext("A", 3,family = "Times New Roman", outer=FALSE, cex=1.5,adj=-0.35, line=1)
-
 
 # postscript(paste(".",outdir_fig,"m_eigenvalues.eps", sep="/"),
-#            family = "Times", pointsize=14, width =5, height = 4.35)
+#            horizontal = FALSE, onefile = FALSE, paper = "special",
+#            family = "ArialMT", pointsize = 14.95, width = 4.185, height = 4.7874)
 
-# png(paste(".",outdir_fig,"m_eigenvalues.png", sep="/"),  units = "in", res=200,
-#     family = "Times New Roman", bg = "white", pointsize=14, width =5, height = 4.35)
+# png(paste(".",outdir_fig,"m_eigenvalues.png", sep="/"),  res=300,
+#     family = "Arial", bg = "white", pointsize = 12, width = 1063, height = 1036)
 
 par(mfrow=c(1,1), mar=c(4, 4.5,1, 1))
 plot(NULL, xlim=c(0.5,6.5), xlab="",yaxt="n",bty="L",
@@ -511,10 +490,10 @@ M_VarNeigenVec[,boxplot(Eig~VecNum,col="white", outcex = 0.75, at=seq(0.85,5.85,
 M_VarNeigenVec[,boxplot(Var~VecNum,col="darkgrey", outcex = 0.75, at=seq(1.15,6.15, 1), whisklty = 1,
                         yaxt="n",pch=4,xaxt="n",frame=F,boxwex=0.2, add = TRUE)]
 axis(side=1,at=3.5, "Ordered eigenvalue or trait", line=2, tick = FALSE)
-axis(side=2,at=50, "Proportion of among-line variance", line=2, tick = FALSE)
+axis(side=2,at=50, "Proportion of among-line variance", line=2.5, tick = FALSE)
 axis(side=2, at=seq(0,100, 20),paste0(seq(0,100, 20),"%"), las=2)
 axis(side=1, at=1:6, as.expression(lapply(paste0(1:6,c("st","nd","rd","th","th","th")), function(i)bquote(italic(.(i))))))
-# dev.off()
+dev.off()
 
 # Section 3. Residual Varaince (not included in MS) -----------------
 # Get observed R matrices from REML

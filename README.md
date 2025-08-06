@@ -1,12 +1,31 @@
-# Variation in mutational variance-covariance matrices for _Drosophila serrata_ wing shape across sequential generations
+# [Identification of multivariate phenotypes most influenced by mutation: _Drosophila serrata_ wings as a case study](https://doi.org/10.1093/evolut/qpaf160) <a href="http://rsbl.royalsocietypublishing.org/content/12/5/20151003"><img src="http://tguillerme.github.io/images/OA.png" height="20" widht="20"/></a>
 [Cara Conradsen](https://mcguiganlab.org/cara-conradson/) and [Katrina McGuigan](https://mcguiganlab.org/katrina-mcguigan/)
+Published in Evolution: 01 August 2025
 
 This repository contains all the code and data used in the manuscript.
 
 ###### We are still in the process of finalising and refining the manuscript.
-###### This is the companion paper to [Causes of variability in estimates of mutational variance from mutation accumulation experiments](https://doi.org/10.1093/genetics/iyac060) in Genetics. <a href="http://rsbl.royalsocietypublishing.org/content/12/5/20151003"><img src="http://tguillerme.github.io/images/OA.png" height="20" widht="20"/></a>
+###### The history of the experiment can be found in [Causes of variability in estimates of mutational variance from mutation accumulation experiments](https://doi.org/10.1093/genetics/iyac060) in Genetics. <a href="http://rsbl.royalsocietypublishing.org/content/12/5/20151003"><img src="http://tguillerme.github.io/images/OA.png" height="20" widht="20"/></a>
 
 ## Analysis
+### `MVN_M_6_UN.sas`
+This SAS script analyses the Drosophila wing trait data from our mutation reduction experiment where the 12 populations were analysed separately. The outcome is the multivariate (MVN) unstructured (UN) mutation variance - covariance matrix (M) for six wing traits. Here, populations are labelled first by treatment and then sampled generation (e.g., treatment 1_1 small treatment, generation 1). The steps include:
+
+1. Sorting the Data
+The dataset `mrwings` is sorted by `Trait` and `Gen`.
+2. Standardising Scores
+The `Score` variable is standardised (mean = 0, std = 1) within each `Trait` group and saved as `stdmrwings`.
+3. Linear Mixed Model using the mixed procedure (`PROC MIXED`)
+A mixed-effects model is fit using REML, applied to treatments seperately, where multivaraite outliers are excluded (e.g., `Treat=1`, `Gen=1`, excluding `multiout=1`):
+- _Fixed effect: `Trait`
+- _Random effects: `Trait` within `Line`, `Trait` within `Vial`, nested in `Treat` and `Line`
+- _Repeated measures: `Animal` nested in `Treat`, `Line`, and `Vial`
+4. Output Tables
+The following outputs are saved for downstream analysis (within the folder `un_sas_output`):
+- _`Covparms1_1`: Covariance parameters
+- _`FitStat1_1`: Fit statistics
+- _`Converge1_1`: Convergence diagnostics
+- _`Asycov1_1`: Asymptotic covariance matrix
 
 ### `randomise_wing_data.R` 
 

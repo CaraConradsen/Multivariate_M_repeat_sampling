@@ -2,7 +2,7 @@
 
 #packages
 library(dplyr, warn.conflicts = FALSE); options(dplyr.summarise.inform = FALSE); library(data.table)
-library(stringi); library(stringr); library(magrittr); library(evolqg); library(Matrix)
+library(stringi); library(stringr); library(magrittr); library(evolqg); library(Matrix); library(abind)
 library(foreach); library(matrixStats); library(MASS); library(parallel); library(matrixcalc)
 library(gdata); library(bigstatsr); library(abind); library(psych); library(stats)
 
@@ -51,8 +51,9 @@ epsilon = 0.05 # used for plotting caps CI intervals
 
 
 # Specify subfolders
-un_cov_dir <- list.files(pattern = "un_sas_output", full.names = TRUE)
-rando_un_cov_dir <- list.files(pattern = "generated_dataset", full.names = TRUE)
+un_cov_dir <-  list.dirs(recursive = TRUE, full.names = TRUE)[grepl("un_sas_output", list.dirs(recursive = TRUE, full.names = TRUE))] 
+rando_un_cov_dir <- list.dirs(recursive = TRUE, full.names = TRUE)[grepl("generated_dataset", list.dirs(recursive = TRUE, full.names = TRUE))] 
+  
 
 # Check model convergence for observed M and the 1000 randomized M 
 # Observed data:
@@ -498,7 +499,7 @@ axis(side=1, at=1:6, as.expression(lapply(paste0(1:6,c("st","nd","rd","th","th",
 # Part A. Implement Krzanowksi's method, and generate eigenanalysis and null distributions 
 
 # We first determined the number of eigenvalues capturing at least 90% variance
-M_90var_eigs <- foreach(i = 1:p, .combine = 'rbind') %do%
+M_90var_eigs <- foreach(i = 1:p, .packages = c("psych"), .combine = 'rbind') %do%
   {cbind(i, 1:6, 
          eigen(M_list[[i]])$values / tr(M_list[[i]]))}
 colnames(M_90var_eigs) <- c("pop", "eigval_num", "perc_variance")
@@ -640,11 +641,14 @@ for(j in c(1:3)){#number of eigenvectors of H
 }
 
 
-H_thru_M <- cbind(rep(1:12, 6), rep(1:3,each=6), 
+H_thru_M <- cbind(rep(1:12, 6), rep(1:3,each=12), 
                   rep(c(seq(1.25,11.25,2), seq(1.75,11.75,2)),3))
+# no longer need extra space (not using R)
+H_thru_M <- unique(H_thru_M)
+
 H_thru_M <- as.data.table(H_thru_M)
 colnames(H_thru_M)<-c("pop_num", "Hvec","x")
-H_thru_M[, pop:=c(unlist(names(M_list)[p])), by=.I]
+H_thru_M[, pop:= c(unlist(names(M_list)[pop_num])), by=.I]
 H_thru_M[,c("var","Lo", "Hi"):=0]
 
 for(j in c(1:3)){#number of eigenvecotrs of H
@@ -656,6 +660,17 @@ for(j in c(1:3)){#number of eigenvecotrs of H
 };rm(tempCI)
 H_thru_M[,pchy:=fcase(pop_num %in% 1:6, 16,
                         default= 21)]
+
+
+# Add eigenvalues of M ----------------------------------------------------
+reg_H_thru_M = H_thru_M
+
+reg_H_thru_M$eigval_m = mapply(function(x, y) eigen(M_list[[x]])$values[y], reg_H_thru_M$pop, reg_H_thru_M$Hvec)
+
+# Output for updates figure
+# data_dir2 = "C:/Users/carac/Dropbox/Multivariate MR Manuscript/Data files/"
+fwrite(reg_H_thru_M, paste0(data_dir2, "H_scores_with_M.csv"))
+
 
 # postscript(paste(".",outdir_fig,"HvecsThruM.eps", sep="/"),
 #            family = "Times", pointsize=12, width =10, height = 4.35)

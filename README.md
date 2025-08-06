@@ -5,7 +5,6 @@ Published in Evolution: 01 August 2025
 
 This repository contains all the code and data used in the manuscript.
 
-###### We are still in the process of finalising and refining the manuscript.
 ###### The history of the experiment can be found in [Causes of variability in estimates of mutational variance from mutation accumulation experiments](https://doi.org/10.1093/genetics/iyac060) in Genetics. <a href="http://rsbl.royalsocietypublishing.org/content/12/5/20151003"><img src="http://tguillerme.github.io/images/OA.png" height="20" widht="20"/></a>
 
 ## Analysis

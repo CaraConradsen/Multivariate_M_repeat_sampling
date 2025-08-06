@@ -1,7 +1,9 @@
+.gitignore
 .Rproj.user
 .Rhistory
 .RData
 .Ruserdata
+Multivariate_M_repeat_sampling.Rproj
 generated_dataset/converge_1_125.csv                    
 generated_dataset/converge_126_250.csv                    
 generated_dataset/converge_251_375.csv                    
